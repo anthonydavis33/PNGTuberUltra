@@ -13,7 +13,11 @@
 //   - hotkey "toggle" channel → ["true", "false"]
 //   - KeyEvent / unknown → null (free text)
 
-import { type AvatarModel, PHONEMES } from "../types/avatar";
+import {
+  type AvatarModel,
+  type BindingKind,
+  PHONEMES,
+} from "../types/avatar";
 
 /**
  * MicPhoneme is only useful when the global phoneme feature is on AND at
@@ -26,11 +30,29 @@ function isPhonemeChannelReachable(model: AvatarModel): boolean {
   return (mic.thresholds ?? []).some((t) => t.phonemes !== false);
 }
 
-/** Built-ins + every user-defined hotkey channel. Sorted with built-ins first. */
-export function getKnownChannels(model: AvatarModel): string[] {
-  const builtins: string[] = ["MicState"];
-  if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
-  builtins.push("KeyEvent", "KeyRegion");
+/**
+ * Channels available for binding, filtered by binding kind.
+ *
+ * - `visibility` (default): discrete-value channels.
+ *   MicState, MicPhoneme (if reachable), KeyEvent, KeyRegion, plus every
+ *   user-defined hotkey channel.
+ * - `transform`: numeric channels.
+ *   MicVolume, plus user-defined hotkey channels (toggle channels coerce
+ *   to 0/1 cleanly; set channels are usually discrete strings, less useful,
+ *   but listed for completeness).
+ */
+export function getKnownChannels(
+  model: AvatarModel,
+  kind: BindingKind = "visibility",
+): string[] {
+  const builtins: string[] = [];
+  if (kind === "visibility") {
+    builtins.push("MicState");
+    if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
+    builtins.push("KeyEvent", "KeyRegion");
+  } else {
+    builtins.push("MicVolume");
+  }
 
   const userChannels = new Set<string>();
   for (const hk of model.inputs?.keyboard?.hotkeys ?? []) {

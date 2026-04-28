@@ -3,10 +3,12 @@ import { Plus, RotateCcw } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import { NumberField } from "../components/NumberField";
 import { BindingRow } from "../components/BindingRow";
+import { TransformBindingRow } from "../components/TransformBindingRow";
 import { getKnownChannels } from "../bindings/channels";
 import {
   DEFAULT_TRANSFORM,
   type Transform,
+  type TransformBinding,
   type VisibilityBinding,
 } from "../types/avatar";
 
@@ -24,7 +26,14 @@ export function Properties() {
   const updateBinding = useAvatar((s) => s.updateBinding);
   const model = useAvatar((s) => s.model);
 
-  const channels = useMemo(() => getKnownChannels(model), [model]);
+  const visibilityChannels = useMemo(
+    () => getKnownChannels(model, "visibility"),
+    [model],
+  );
+  const transformChannels = useMemo(
+    () => getKnownChannels(model, "transform"),
+    [model],
+  );
 
   if (!sprite) {
     return (
@@ -46,12 +55,28 @@ export function Properties() {
     updateSpriteTransform(sprite.id, DEFAULT_TRANSFORM);
   };
 
-  const addNewBinding = (): void => {
+  const addNewVisibilityBinding = (): void => {
     const binding: VisibilityBinding = {
       id: newBindingId(),
       target: "visible",
       input: "MicState",
       condition: { op: "equals", value: "talking" },
+    };
+    addBinding(sprite.id, binding);
+  };
+
+  const addNewTransformBinding = (): void => {
+    const binding: TransformBinding = {
+      id: newBindingId(),
+      target: "scaleY",
+      input: "MicVolume",
+      mapping: {
+        type: "linear",
+        inMin: 0,
+        inMax: 1,
+        outMin: 1,
+        outMax: 1.2,
+      },
     };
     addBinding(sprite.id, binding);
   };
@@ -110,19 +135,29 @@ export function Properties() {
       <section className="properties-section">
         <div className="properties-section-header">
           <span>Bindings</span>
-          <button
-            onClick={addNewBinding}
-            className="tool-btn"
-            title="Add a visibility binding"
-          >
-            <Plus size={12} />
-            Add
-          </button>
+          <div className="properties-section-actions">
+            <button
+              onClick={addNewVisibilityBinding}
+              className="tool-btn"
+              title="Add a visibility binding"
+            >
+              <Plus size={12} />
+              Visibility
+            </button>
+            <button
+              onClick={addNewTransformBinding}
+              className="tool-btn"
+              title="Add a transform binding"
+            >
+              <Plus size={12} />
+              Transform
+            </button>
+          </div>
         </div>
 
         {sprite.bindings.length === 0 ? (
           <p className="empty">
-            No bindings — sprite is always visible.
+            No bindings — sprite always visible at base transform.
           </p>
         ) : (
           <ul className="binding-list">
@@ -131,12 +166,20 @@ export function Properties() {
                 <BindingRow
                   key={b.id}
                   binding={b}
-                  channels={channels}
+                  channels={visibilityChannels}
                   model={model}
                   onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
                   onRemove={() => removeBinding(sprite.id, b.id)}
                 />
-              ) : null,
+              ) : (
+                <TransformBindingRow
+                  key={b.id}
+                  binding={b}
+                  channels={transformChannels}
+                  onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
+                  onRemove={() => removeBinding(sprite.id, b.id)}
+                />
+              ),
             )}
           </ul>
         )}

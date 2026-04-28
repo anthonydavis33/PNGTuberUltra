@@ -19,7 +19,10 @@ import {
   type FederatedPointerEvent,
 } from "pixi.js";
 import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
-import { computeSpriteVisibility } from "../bindings/evaluate";
+import {
+  applyTransformBindings,
+  computeSpriteVisibility,
+} from "../bindings/evaluate";
 import { useAvatar } from "../store/useAvatar";
 
 export class PixiApp {
@@ -160,7 +163,22 @@ export class PixiApp {
     for (const ms of sprites) {
       const pixiSprite = this.spriteMap.get(ms.id);
       if (!pixiSprite) continue;
+
       pixiSprite.visible = computeSpriteVisibility(ms);
+
+      // Transform overrides — base transform with binding outputs replacing
+      // any property that has a transform binding writing to it.
+      const overrides = applyTransformBindings(ms);
+      pixiSprite.x = overrides.x ?? ms.transform.x;
+      pixiSprite.y = overrides.y ?? ms.transform.y;
+      pixiSprite.rotation =
+        ((overrides.rotation ?? ms.transform.rotation) * Math.PI) / 180;
+      pixiSprite.scale.set(
+        overrides.scaleX ?? ms.transform.scaleX,
+        overrides.scaleY ?? ms.transform.scaleY,
+      );
+      // alpha isn't part of the base Transform — defaults to 1 unbound.
+      pixiSprite.alpha = overrides.alpha ?? 1;
     }
   };
 

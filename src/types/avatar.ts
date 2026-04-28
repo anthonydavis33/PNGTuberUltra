@@ -57,12 +57,37 @@ export interface BindingCondition {
   value: string;
 }
 
-export type BindingTarget = "visible";
+/** Sprite properties a transform binding can drive. */
+export type TransformTarget =
+  | "x"
+  | "y"
+  | "rotation"
+  | "scaleX"
+  | "scaleY"
+  | "alpha";
+
+export type BindingTarget = "visible" | TransformTarget;
 
 /**
- * A binding that reads a bus channel and contributes to a sprite property.
- * Phase 3a: target is always "visible". Multiple visibility bindings on a
- * sprite are AND-ed together (every binding must match).
+ * Linear input→output range mapping for transform bindings.
+ *   inMin, inMax  — input range from the channel value
+ *   outMin, outMax — output range applied to the sprite property
+ *   clamped (default true) — clamp output to [outMin, outMax]
+ */
+export interface BindingMappingLinear {
+  type: "linear";
+  inMin: number;
+  inMax: number;
+  outMin: number;
+  outMax: number;
+  clamped?: boolean;
+}
+
+export type BindingMapping = BindingMappingLinear;
+
+/**
+ * Visibility binding — boolean output ANDed across all visibility bindings
+ * on a sprite. If any binding fails, the sprite is hidden.
  */
 export interface VisibilityBinding {
   id: string;
@@ -72,7 +97,24 @@ export interface VisibilityBinding {
   condition: BindingCondition;
 }
 
-export type Binding = VisibilityBinding;
+/**
+ * Transform binding — numeric output replaces the corresponding base
+ * transform property while the binding is active. Multiple transform
+ * bindings on the same target are last-wins (model array order).
+ */
+export interface TransformBinding {
+  id: string;
+  target: TransformTarget;
+  /** Bus channel name. Continuous numeric channels work best (MicVolume).
+   *  Booleans coerce to 0/1; non-numeric strings are skipped. */
+  input: string;
+  mapping: BindingMapping;
+}
+
+export type Binding = VisibilityBinding | TransformBinding;
+
+/** Discrimination kind for picking channel lists / row UIs. */
+export type BindingKind = "visibility" | "transform";
 
 export interface AvatarModel {
   schema: 1;

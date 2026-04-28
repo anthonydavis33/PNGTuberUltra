@@ -6,9 +6,24 @@ import { inputBus } from "../inputs/InputBus";
 import {
   type Binding,
   type BindingCondition,
+  type BindingMappingLinear,
   type Sprite,
+  type TransformBinding,
+  type TransformTarget,
   type VisibilityBinding,
 } from "../types/avatar";
+
+// ---------- Type guards ----------
+
+export function isVisibilityBinding(b: Binding): b is VisibilityBinding {
+  return b.target === "visible";
+}
+
+export function isTransformBinding(b: Binding): b is TransformBinding {
+  return b.target !== "visible";
+}
+
+// ---------- Visibility ----------
 
 /**
  * Stringify a bus channel value for comparison. Booleans become "true"/"false",
@@ -43,26 +58,77 @@ export function evaluateCondition(
   }
 }
 
-export function evaluateBinding(b: Binding): boolean {
+export function evaluateVisibilityBinding(b: VisibilityBinding): boolean {
   const channelValue = inputBus.get(b.input);
   return evaluateCondition(channelValue, b.condition);
 }
 
 /**
- * Given a sprite, compute its current visibility:
+ * Compute current visibility:
  *   sprite.visible AND every visibility binding.
- *
- * If the sprite has no bindings, returns sprite.visible directly.
+ * If the sprite has no visibility bindings, returns sprite.visible directly.
  */
 export function computeSpriteVisibility(sprite: Sprite): boolean {
   if (!sprite.visible) return false;
   for (const b of sprite.bindings) {
     if (!isVisibilityBinding(b)) continue;
-    if (!evaluateBinding(b)) return false;
+    if (!evaluateVisibilityBinding(b)) return false;
   }
   return true;
 }
 
-function isVisibilityBinding(b: Binding): b is VisibilityBinding {
-  return b.target === "visible";
+// ---------- Transform ----------
+
+/**
+ * Coerce a bus channel value to a number for transform binding inputs.
+ * Booleans become 0/1. Strings parse as floats. Non-numeric strings,
+ * objects, null/undefined return null (binding is skipped).
+ */
+export function valueAsNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+export function evaluateLinearMapping(
+  value: number,
+  m: BindingMappingLinear,
+): number {
+  const span = m.inMax - m.inMin;
+  const t = span === 0 ? 0 : (value - m.inMin) / span;
+  const out = m.outMin + t * (m.outMax - m.outMin);
+  if (m.clamped === false) return out;
+  const lo = Math.min(m.outMin, m.outMax);
+  const hi = Math.max(m.outMin, m.outMax);
+  return Math.max(lo, Math.min(hi, out));
+}
+
+/** Returns null when the channel value can't be coerced to a number. */
+export function evaluateTransformBinding(b: TransformBinding): number | null {
+  const channelValue = inputBus.get(b.input);
+  const num = valueAsNumber(channelValue);
+  if (num === null) return null;
+  return evaluateLinearMapping(num, b.mapping);
+}
+
+/**
+ * Compute every transform-property override active on a sprite.
+ * Multiple transform bindings on the same target are last-wins
+ * (the model's bindings array order).
+ */
+export function applyTransformBindings(
+  sprite: Sprite,
+): Partial<Record<TransformTarget, number>> {
+  const overrides: Partial<Record<TransformTarget, number>> = {};
+  for (const b of sprite.bindings) {
+    if (!isTransformBinding(b)) continue;
+    const value = evaluateTransformBinding(b);
+    if (value === null) continue;
+    overrides[b.target] = value;
+  }
+  return overrides;
 }
