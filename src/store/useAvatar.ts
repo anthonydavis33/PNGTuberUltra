@@ -3,11 +3,13 @@ import {
   AssetEntry,
   AssetId,
   AvatarModel,
+  DEFAULT_ANCHOR,
+  DEFAULT_MIC_CONFIG,
+  DEFAULT_TRANSFORM,
+  MicConfig,
   Sprite,
   SpriteId,
   Transform,
-  DEFAULT_ANCHOR,
-  DEFAULT_TRANSFORM,
 } from "../types/avatar";
 import { unloadAsset } from "../canvas/assetLoader";
 
@@ -26,6 +28,11 @@ interface AvatarStore {
    *  earlier index = drawn first / lower z). */
   reorderSprites: (fromIdx: number, toIdx: number) => void;
   registerAsset: (asset: AssetEntry) => void;
+
+  // Mic config — convenience selector + updater. Returns the avatar's
+  // mic config, or DEFAULT_MIC_CONFIG if the avatar has none yet.
+  getMicConfig: () => MicConfig;
+  updateMicConfig: (patch: Partial<MicConfig>) => void;
 }
 
 let nextSpriteNum = 1;
@@ -137,4 +144,24 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
     set((state) => ({
       assets: { ...state.assets, [asset.id]: asset },
     })),
+
+  getMicConfig: () => {
+    const cfg = get().model.inputs?.mic;
+    return cfg ?? DEFAULT_MIC_CONFIG;
+  },
+
+  updateMicConfig: (patch) =>
+    set((state) => {
+      const current = state.model.inputs?.mic ?? DEFAULT_MIC_CONFIG;
+      const next: MicConfig = { ...current, ...patch };
+      return {
+        model: {
+          ...state.model,
+          inputs: {
+            ...state.model.inputs,
+            mic: next,
+          },
+        },
+      };
+    }),
 }));

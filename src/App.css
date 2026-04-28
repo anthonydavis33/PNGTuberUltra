@@ -32,7 +32,7 @@ body,
 
 .app {
   display: grid;
-  grid-template-rows: 36px 1fr;
+  grid-template-rows: 36px 1fr 32px;
   height: 100vh;
 }
 
@@ -287,6 +287,293 @@ body,
   gap: 6px;
   width: 100%;
   margin-top: 16px;
+}
+
+/* Status bar (bottom strip) ------------------------------------------ */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  user-select: none;
+  position: relative;
+}
+
+.mic-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transition:
+    background 0.1s,
+    border-color 0.1s,
+    color 0.1s;
+}
+
+.mic-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.mic-toggle.live {
+  background: rgba(231, 70, 70, 0.14);
+  border-color: #c24848;
+  color: #ff8888;
+}
+
+.mic-toggle.live:hover {
+  background: rgba(231, 70, 70, 0.22);
+}
+
+.volume-meter {
+  position: relative;
+  width: 200px;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.volume-meter-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    #4ade80 0%,
+    #84cc16 40%,
+    #fbbf24 70%,
+    #ef4444 95%
+  );
+  transition: width 0.05s linear;
+}
+
+.volume-meter-marker {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.7);
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.hold-meter {
+  position: relative;
+  width: 70px;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.hold-meter-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.05s linear;
+}
+
+.status-values {
+  display: flex;
+  gap: 14px;
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.status-value {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.status-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  font-size: 9px;
+}
+
+.status-num {
+  color: var(--text);
+}
+
+.status-error {
+  color: #ff8888;
+  font-size: 11px;
+}
+
+.mic-settings-gear {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.mic-settings-gear:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Threshold popover --------------------------------------------------- */
+.threshold-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  width: 380px;
+  z-index: 100;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.threshold-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.threshold-popover h3 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.popover-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+}
+
+.popover-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.phoneme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.phoneme-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.threshold-list-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.threshold-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px 0;
+}
+
+.threshold-list li {
+  display: grid;
+  grid-template-columns: 1fr 64px 64px 26px;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.threshold-list li:hover {
+  background: transparent;
+}
+
+.threshold-list input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.threshold-list input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.threshold-name {
+  text-transform: none;
+}
+
+.threshold-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.threshold-delete:hover {
+  color: #fff;
+  background: var(--danger);
+}
+
+.threshold-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.threshold-actions .tool-btn {
+  flex: 1;
 }
 
 /* PixiJS host --------------------------------------------------------- */

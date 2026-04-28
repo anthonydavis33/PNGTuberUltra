@@ -41,7 +41,47 @@ export interface Sprite {
 export interface AvatarModel {
   schema: 1;
   sprites: Sprite[];
+  /** Per-avatar input source configuration. Optional — defaults applied when missing. */
+  inputs?: InputsConfig;
 }
+
+export interface InputsConfig {
+  mic?: MicConfig;
+}
+
+export interface MicConfig {
+  thresholds: MicThreshold[];
+  /** Phoneme detection (formant-based vowel classification) is opt-in per
+   *  avatar. When false, MicPhoneme is always null. */
+  phonemesEnabled: boolean;
+}
+
+export interface MicThreshold {
+  /** Stable id for editor list keys. */
+  id: string;
+  /** User-facing name and the value of MicState when this threshold is active. */
+  name: string;
+  /** Volume threshold (0..1) above which this state activates. */
+  minVolume: number;
+  /** ms to hold after volume drops below this threshold's minVolume before
+   *  MicState falls to null. */
+  holdMs: number;
+}
+
+/**
+ * Default mic config for new avatars: a single "talking" threshold with
+ * a small hold, matching PNGTuber+'s baseline behavior.
+ */
+export const DEFAULT_MIC_CONFIG: MicConfig = {
+  thresholds: [
+    { id: "thr-talking", name: "talking", minVolume: 0.05, holdMs: 150 },
+  ],
+  phonemesEnabled: false,
+};
+
+/** Vowels we detect via formant analysis. */
+export const PHONEMES = ["A", "I", "U", "E", "O"] as const;
+export type Phoneme = (typeof PHONEMES)[number];
 
 /**
  * Asset registry entry. Lives sidecar to AvatarModel — model.json carries
