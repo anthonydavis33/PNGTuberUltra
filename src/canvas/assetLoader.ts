@@ -36,6 +36,42 @@ export async function loadFileAsAsset(file: File): Promise<AssetEntry> {
     id,
     name: file.name.replace(SUPPORTED_EXTENSIONS, ""),
     blobUrl,
+    blob: file,
+    mimeType: file.type || "image/png",
+  };
+}
+
+/**
+ * Build an AssetEntry from raw bytes (e.g. when loading a .pnxr from disk).
+ * Same flow as loadFileAsAsset but skips the File wrapper.
+ */
+export async function loadBytesAsAsset(args: {
+  id: string;
+  name: string;
+  bytes: Uint8Array;
+  mimeType: string;
+}): Promise<AssetEntry> {
+  const blob = new Blob([args.bytes as BlobPart], { type: args.mimeType });
+  const blobUrl = URL.createObjectURL(blob);
+
+  const img = new Image();
+  img.src = blobUrl;
+  try {
+    await img.decode();
+  } catch (err) {
+    URL.revokeObjectURL(blobUrl);
+    throw err;
+  }
+
+  const texture = Texture.from(img);
+  Assets.cache.set(args.id, texture);
+
+  return {
+    id: args.id,
+    name: args.name,
+    blobUrl,
+    blob,
+    mimeType: args.mimeType,
   };
 }
 

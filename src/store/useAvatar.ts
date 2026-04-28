@@ -18,8 +18,15 @@ import { unloadAsset } from "../canvas/assetLoader";
 interface AvatarStore {
   model: AvatarModel;
   selectedId: SpriteId | null;
-  /** Sidecar registry: assetId -> { name, blobUrl }. Not part of AvatarModel. */
+  /** Sidecar registry: assetId -> { name, blobUrl, blob, mimeType }. Not part
+   *  of AvatarModel JSON — the bytes are written into the .pnxr's assets/
+   *  folder instead. */
   assets: Record<AssetId, AssetEntry>;
+  /** True when the model has unsaved changes since the last load/save. */
+  isDirty: boolean;
+  /** Path to the .pnxr the avatar was last loaded from or saved to.
+   *  Null until the user explicitly saves or opens. */
+  currentFilePath: string | null;
 
   // Actions
   selectSprite: (id: SpriteId | null) => void;
@@ -39,6 +46,17 @@ interface AvatarStore {
   // Keyboard config — same pattern.
   getKeyboardConfig: () => KeyboardConfig;
   updateKeyboardConfig: (patch: Partial<KeyboardConfig>) => void;
+
+  // File I/O
+  /** Replace the current avatar with a freshly loaded one. Unloads existing
+   *  asset textures. Marks clean. */
+  loadAvatar: (
+    model: AvatarModel,
+    assets: Record<AssetId, AssetEntry>,
+    filePath: string | null,
+  ) => void;
+  /** Mark the model as saved (clears dirty flag, optionally updates path). */
+  markSaved: (filePath?: string) => void;
 }
 
 let nextSpriteNum = 1;
@@ -54,6 +72,10 @@ const placeholder: Sprite = {
   modifiers: [],
 };
 
+/** Module-level guard so loadAvatar/markSaved don't trip the
+ *  auto-mark-dirty subscription that watches model ref changes. */
+let suppressDirty = false;
+
 export const useAvatar = create<AvatarStore>((set, get) => ({
   model: {
     schema: 1,
@@ -61,6 +83,8 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
   },
   selectedId: placeholder.id,
   assets: {},
+  isDirty: false,
+  currentFilePath: null,
 
   selectSprite: (id) => set({ selectedId: id }),
 
@@ -191,4 +215,43 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         },
       };
     }),
+
+  loadAvatar: (model, assets, filePath) => {
+    const state = get();
+    // Unload any current assets — except those in the new set, which we just
+    // re-registered with the same id (rare edge case but safe).
+    for (const id in state.assets) {
+      if (assets[id]) continue;
+      void unloadAsset(state.assets[id]);
+    }
+    suppressDirty = true;
+    set({
+      model,
+      assets,
+      selectedId: model.sprites[0]?.id ?? null,
+      isDirty: false,
+      currentFilePath: filePath,
+    });
+    suppressDirty = false;
+  },
+
+  markSaved: (filePath) => {
+    suppressDirty = true;
+    set((state) => ({
+      isDirty: false,
+      currentFilePath:
+        filePath !== undefined ? filePath : state.currentFilePath,
+    }));
+    suppressDirty = false;
+  },
 }));
+
+// Auto-mark-dirty: any change to `model` flips isDirty. Subscriptions outside
+// the create() factory don't trip recursively because Zustand's listeners
+// fire after the state update completes.
+useAvatar.subscribe((current, previous) => {
+  if (suppressDirty) return;
+  if (current.model !== previous.model && !current.isDirty) {
+    useAvatar.setState({ isDirty: true });
+  }
+});

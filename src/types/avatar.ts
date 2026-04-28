@@ -140,8 +140,8 @@ export const DEFAULT_KEYBOARD_CONFIG: KeyboardConfig = {
 
 /**
  * Asset registry entry. Lives sidecar to AvatarModel — model.json carries
- * AssetIds, the asset table holds the binary references. On save (phase 2d)
- * each entry's bytes get written into the .pnxr zip's assets/ folder.
+ * AssetIds, the asset table holds the binary references. On save each
+ * entry's bytes get written into the .pnxr zip's assets/ folder.
  */
 export interface AssetEntry {
   id: AssetId;
@@ -149,6 +149,11 @@ export interface AssetEntry {
   name: string;
   /** Object URL for in-memory rendering. Revoked on removeAsset. */
   blobUrl: string;
+  /** Original asset bytes. Held so we can serialize back to .pnxr without
+   *  a round-trip through the blob URL. */
+  blob: Blob;
+  /** MIME type, used to choose the correct file extension in assets/. */
+  mimeType: string;
 }
 
 export const DEFAULT_TRANSFORM: Transform = {
