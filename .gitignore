@@ -1,0 +1,48 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+out/
+
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/gen/schemas/
+
+# Vite
+.vite/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Claude Code workspace (kept locally for session memory, not pushed)
+.claude/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Test coverage
+coverage/
+
+# Temp avatar exports during dev
+*.pnxr
+!docs/examples/*.pnxr
