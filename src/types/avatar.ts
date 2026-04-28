@@ -1,5 +1,6 @@
 // Avatar data model types.
 // Phase 1: only sprites + transforms are populated.
+// Phase 2a: assets registry for real PNG textures.
 // Bindings, modifiers, animations stay as empty arrays — added in later phases
 // to keep the schema stable across phases.
 //
@@ -7,6 +8,7 @@
 // Rotation in degrees (converted to radians inside PixiJS render).
 
 export type SpriteId = string;
+export type AssetId = string;
 
 export interface Transform {
   x: number;
@@ -25,8 +27,8 @@ export interface Anchor {
 export interface Sprite {
   id: SpriteId;
   name: string;
-  /** Path to PNG asset. Undefined = render a placeholder rectangle. */
-  asset?: string;
+  /** AssetId reference. Undefined = render a placeholder rectangle. */
+  asset?: AssetId;
   transform: Transform;
   anchor: Anchor;
   visible: boolean;
@@ -39,6 +41,19 @@ export interface Sprite {
 export interface AvatarModel {
   schema: 1;
   sprites: Sprite[];
+}
+
+/**
+ * Asset registry entry. Lives sidecar to AvatarModel — model.json carries
+ * AssetIds, the asset table holds the binary references. On save (phase 2d)
+ * each entry's bytes get written into the .pnxr zip's assets/ folder.
+ */
+export interface AssetEntry {
+  id: AssetId;
+  /** Original file name without extension, used as default sprite name. */
+  name: string;
+  /** Object URL for in-memory rendering. Revoked on removeAsset. */
+  blobUrl: string;
 }
 
 export const DEFAULT_TRANSFORM: Transform = {

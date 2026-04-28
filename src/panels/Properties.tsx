@@ -1,5 +1,7 @@
+import { RotateCcw } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
-import type { Transform } from "../types/avatar";
+import { NumberField } from "../components/NumberField";
+import { DEFAULT_TRANSFORM, type Transform } from "../types/avatar";
 
 export function Properties() {
   const selectedId = useAvatar((s) => s.selectedId);
@@ -18,15 +20,14 @@ export function Properties() {
   }
 
   const t = sprite.transform;
+  const set =
+    (key: keyof Transform) =>
+    (v: number): void => {
+      updateSpriteTransform(sprite.id, { [key]: v });
+    };
 
-  // Controlled inputs — onChange parses to float, ignores NaN so partial
-  // typing (like "-" or empty) doesn't crash the store.
-  const onChange = (key: keyof Transform) => (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const v = parseFloat(e.target.value);
-    if (Number.isNaN(v)) return;
-    updateSpriteTransform(sprite.id, { [key]: v });
+  const resetTransform = () => {
+    updateSpriteTransform(sprite.id, DEFAULT_TRANSFORM);
   };
 
   return (
@@ -34,41 +35,50 @@ export function Properties() {
       <h2>Properties</h2>
       <h3>{sprite.name}</h3>
       <div className="prop-grid">
-        <label>
-          X
-          <input type="number" value={t.x} onChange={onChange("x")} />
-        </label>
-        <label>
-          Y
-          <input type="number" value={t.y} onChange={onChange("y")} />
-        </label>
-        <label>
-          Rotation (deg)
-          <input
-            type="number"
-            value={t.rotation}
-            onChange={onChange("rotation")}
-          />
-        </label>
-        <label>
-          Scale X
-          <input
-            type="number"
-            step="0.1"
-            value={t.scaleX}
-            onChange={onChange("scaleX")}
-          />
-        </label>
-        <label>
-          Scale Y
-          <input
-            type="number"
-            step="0.1"
-            value={t.scaleY}
-            onChange={onChange("scaleY")}
-          />
-        </label>
+        <NumberField
+          label="X"
+          value={t.x}
+          onChange={set("x")}
+          step={1}
+          precision={0}
+        />
+        <NumberField
+          label="Y"
+          value={t.y}
+          onChange={set("y")}
+          step={1}
+          precision={0}
+        />
+        <NumberField
+          label="Rotation"
+          value={t.rotation}
+          onChange={set("rotation")}
+          step={0.5}
+          precision={1}
+        />
+        <NumberField
+          label="Scale X"
+          value={t.scaleX}
+          onChange={set("scaleX")}
+          step={0.01}
+          precision={2}
+        />
+        <NumberField
+          label="Scale Y"
+          value={t.scaleY}
+          onChange={set("scaleY")}
+          step={0.01}
+          precision={2}
+        />
       </div>
+      <button
+        className="tool-btn reset-transform"
+        onClick={resetTransform}
+        title="Reset transform: x/y/rotation to 0, scale to 1"
+      >
+        <RotateCcw size={14} />
+        Reset Transform
+      </button>
     </aside>
   );
 }

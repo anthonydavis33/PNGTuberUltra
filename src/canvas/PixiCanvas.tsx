@@ -15,6 +15,7 @@ export function PixiCanvas() {
 
   const sprites = useAvatar((s) => s.model.sprites);
   const selectedId = useAvatar((s) => s.selectedId);
+  const assets = useAvatar((s) => s.assets);
 
   // Init Pixi once on mount; tear down on unmount.
   useEffect(() => {
@@ -41,8 +42,9 @@ export function PixiCanvas() {
       };
 
       // Initial sync with current store state.
-      pixi.syncSprites(useAvatar.getState().model.sprites);
-      pixi.setSelectedHighlight(useAvatar.getState().selectedId);
+      const state = useAvatar.getState();
+      pixi.syncSprites(state.model.sprites, state.assets);
+      pixi.setSelectedHighlight(state.selectedId);
     });
 
     return () => {
@@ -52,10 +54,10 @@ export function PixiCanvas() {
     };
   }, []);
 
-  // Push model changes into Pixi.
+  // Push model + asset changes into Pixi.
   useEffect(() => {
-    appRef.current?.syncSprites(sprites);
-  }, [sprites]);
+    appRef.current?.syncSprites(sprites, assets);
+  }, [sprites, assets]);
 
   // Push selection changes into Pixi.
   useEffect(() => {

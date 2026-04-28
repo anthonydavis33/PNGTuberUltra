@@ -92,6 +92,14 @@ Stacked per-sprite, evaluated in order:
 
 All hand-rolled. No physics engine dep — Matter.js / Rapier are overkill for this and pull in collision systems we don't want.
 
+#### Parenting and render order are orthogonal
+
+`Parent` is a transform-inheritance modifier, **not** a scene-graph relationship. All sprites remain flat children of the `world` container in PixiJS for rendering. The model `sprites` array determines render z-order, full stop. Parenting only composes transforms — head moves and hair follows because hair's world transform is computed as `compose(head.worldTransform, hair.localTransform)`, **not** because hair is a Pixi descendant of head.
+
+This decoupling is what lets back-hair render behind the head while front-hair renders on top, even though both have `Parent: head`. If we made parenting a render-tree relationship (the naive Pixi-native approach), we'd lose the ability to interleave a parented sprite's z-order with its parent's siblings — exactly the pattern most 2D rigged avatars need.
+
+Implementation: when applying a sprite's transform, walk the `Parent` chain and compose world transforms before any other modifier runs. `Parent` must be first in the stack so Spring/Drag/Sine see post-parent target values.
+
 ### Animations (MVP — simple tweens only)
 
 - Triggered by event bindings (key region pressed, mic threshold crossed, hotkey, etc.)
