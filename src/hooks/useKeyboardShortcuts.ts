@@ -7,27 +7,7 @@
 
 import { useEffect } from "react";
 import { useAvatar } from "../store/useAvatar";
-
-const TEXT_INPUT_TYPES = new Set([
-  "text",
-  "number",
-  "search",
-  "email",
-  "tel",
-  "url",
-  "password",
-]);
-
-const isTypingInTextInput = (target: EventTarget | null): boolean => {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  if (target.tagName === "TEXTAREA") return true;
-  if (target.tagName === "INPUT") {
-    const type = (target as HTMLInputElement).type.toLowerCase();
-    return TEXT_INPUT_TYPES.has(type);
-  }
-  return false;
-};
+import { isTypingInTextInput } from "../utils/dom";
 
 export function useKeyboardShortcuts(): void {
   useEffect(() => {

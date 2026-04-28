@@ -417,8 +417,7 @@ body,
   font-size: 11px;
 }
 
-.mic-settings-gear {
-  margin-left: auto;
+.status-gear {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -431,12 +430,28 @@ body,
   transition: color 0.1s, border-color 0.1s;
 }
 
-.mic-settings-gear:hover {
+.status-gear:hover {
   color: var(--text);
   border-color: var(--accent);
 }
 
-/* Threshold popover --------------------------------------------------- */
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
+.status-section-right {
+  margin-left: auto;
+}
+
+.status-icon {
+  color: var(--text-dim);
+}
+
+/* Settings popovers (mic + keyboard share base styles) --------------- */
+.settings-popover,
 .threshold-popover {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -445,11 +460,21 @@ body,
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 14px;
-  width: 380px;
   z-index: 100;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
 }
 
+.threshold-popover {
+  width: 380px;
+}
+
+.keyboard-popover {
+  width: 520px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.settings-popover-header,
 .threshold-popover-header {
   display: flex;
   align-items: center;
@@ -457,6 +482,7 @@ body,
   margin-bottom: 12px;
 }
 
+.settings-popover h3,
 .threshold-popover h3 {
   margin: 0;
   font-size: 11px;
@@ -574,6 +600,319 @@ body,
 
 .threshold-actions .tool-btn {
   flex: 1;
+}
+
+/* Keyboard popover sections ------------------------------------------ */
+.popover-section {
+  margin-bottom: 16px;
+}
+
+.popover-section:last-child {
+  margin-bottom: 0;
+}
+
+.popover-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.popover-section-header .tool-btn {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.popover-section .empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 12px;
+  padding: 8px 0;
+  margin: 0;
+}
+
+/* Region list -------------------------------------------------------- */
+.region-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px 0;
+}
+
+.region-list li {
+  display: grid;
+  grid-template-columns: 1fr 110px auto 28px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  margin-bottom: 4px;
+  transition: background 0.1s;
+}
+
+.region-list li:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.region-list li.editing {
+  background: rgba(255, 119, 85, 0.12);
+  outline: 1px solid var(--accent);
+}
+
+.region-name {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.region-name:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.region-name.has-error {
+  border-color: var(--danger);
+  background: rgba(194, 72, 72, 0.08);
+}
+
+.region-name.has-error:focus {
+  border-color: var(--danger);
+}
+
+.validation-warning {
+  margin: 0 0 8px 0;
+  padding: 6px 10px;
+  background: rgba(194, 72, 72, 0.12);
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  font-size: 11px;
+  color: #ff9999;
+  line-height: 1.4;
+}
+
+.region-mode {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.region-mode:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.region-keycount {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+}
+
+.region-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.region-delete:hover {
+  color: #fff;
+  background: var(--danger);
+}
+
+.region-edit-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 8px 0;
+  font-style: italic;
+}
+
+.region-edit-hint strong {
+  color: var(--accent);
+  font-style: normal;
+}
+
+/* Virtual keyboard --------------------------------------------------- */
+.virtual-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.virtual-keyboard-row {
+  display: flex;
+  gap: 4px;
+}
+
+.virtual-keyboard-row.indent-1 {
+  padding-left: 16px;
+}
+
+.virtual-keyboard-row.indent-2 {
+  padding-left: 32px;
+}
+
+.virtual-keyboard-row.center {
+  justify-content: center;
+}
+
+.virtual-key {
+  flex: 0 0 32px;
+  height: 28px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.08s,
+    border-color 0.08s,
+    color 0.08s;
+}
+
+.virtual-key.space {
+  flex: 0 0 200px;
+}
+
+.virtual-key:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--accent);
+}
+
+.virtual-key.highlighted {
+  background: rgba(255, 119, 85, 0.2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.virtual-key.other-used:not(.highlighted) {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
+.virtual-key.pressed {
+  background: rgba(255, 255, 255, 0.18);
+  transform: translateY(1px);
+}
+
+/* Hotkey table ------------------------------------------------------- */
+.hotkey-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.hotkey-table th {
+  text-align: left;
+  font-size: 9px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  padding: 4px 6px 4px 0;
+}
+
+.hotkey-table td {
+  padding: 3px 6px 3px 0;
+  vertical-align: middle;
+}
+
+.hotkey-table td:last-child,
+.hotkey-table th:last-child {
+  padding-right: 0;
+  width: 28px;
+}
+
+.hotkey-table input,
+.hotkey-table select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.hotkey-table input:focus,
+.hotkey-table select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.hotkey-table input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.hotkey-key {
+  font-family: ui-monospace, monospace;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  width: 100%;
+  padding: 4px 8px;
+}
+
+.hotkey-key.binding {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 119, 85, 0.15);
+  font-style: italic;
+}
+
+.hotkey-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.hotkey-delete:hover {
+  color: #fff;
+  background: var(--danger);
 }
 
 /* PixiJS host --------------------------------------------------------- */

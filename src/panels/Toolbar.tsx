@@ -61,7 +61,7 @@ export function Toolbar() {
         style={{ display: "none" }}
         onChange={onFiles}
       />
-      <span className="status">Phase 2a — real PNG sprites</span>
+      <span className="status">Phase 2c — keyboard + hotkeys</span>
     </header>
   );
 }

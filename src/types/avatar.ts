@@ -47,6 +47,7 @@ export interface AvatarModel {
 
 export interface InputsConfig {
   mic?: MicConfig;
+  keyboard?: KeyboardConfig;
 }
 
 export interface MicConfig {
@@ -82,6 +83,60 @@ export const DEFAULT_MIC_CONFIG: MicConfig = {
 /** Vowels we detect via formant analysis. */
 export const PHONEMES = ["A", "I", "U", "E", "O"] as const;
 export type Phoneme = (typeof PHONEMES)[number];
+
+// Keyboard config -----------------------------------------------------
+
+export interface KeyboardConfig {
+  regions: KeyboardRegion[];
+  hotkeys: Hotkey[];
+}
+
+export type RegionMode = "momentary" | "latching";
+
+export interface KeyboardRegion {
+  id: string;
+  /** User-facing name. Becomes the value of KeyRegion while one of the keys is held. */
+  name: string;
+  /** Normalized key identities — single chars are lowercase ("a"), named keys
+   *  use KeyboardEvent.key conventions ("Space", "Enter", "ArrowUp"). */
+  keys: string[];
+  /**
+   * Behavior when the last region key is released.
+   * - "momentary" (default): KeyRegion clears to null. Bongo Cat-style — paw
+   *   visible only while typing.
+   * - "latching": KeyRegion stays at this region's name until another region
+   *   keydown changes it. Useful for "I am in this mode now" behaviors.
+   */
+  mode?: RegionMode;
+}
+
+/**
+ * Hotkey kinds:
+ * - "set" — on press, publish `value` to `channel`. Multiple set hotkeys
+ *   sharing a channel give you radio-button behavior (most-recent wins).
+ *   Example: 5 hotkeys all writing to "Expression" with values "happy",
+ *   "sad", etc.
+ * - "toggle" — on press, flip the boolean on `channel`. Costume behavior.
+ */
+export type HotkeyKind = "set" | "toggle";
+
+export interface Hotkey {
+  id: string;
+  /** User-facing label. */
+  name: string;
+  /** Normalized key identity (same conventions as KeyboardRegion.keys). */
+  key: string;
+  kind: HotkeyKind;
+  /** Bus channel this hotkey writes to. */
+  channel: string;
+  /** Value to publish for "set" hotkeys. Ignored for "toggle". */
+  value?: string;
+}
+
+export const DEFAULT_KEYBOARD_CONFIG: KeyboardConfig = {
+  regions: [],
+  hotkeys: [],
+};
 
 /**
  * Asset registry entry. Lives sidecar to AvatarModel — model.json carries

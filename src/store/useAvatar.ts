@@ -4,8 +4,10 @@ import {
   AssetId,
   AvatarModel,
   DEFAULT_ANCHOR,
+  DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
   DEFAULT_TRANSFORM,
+  KeyboardConfig,
   MicConfig,
   Sprite,
   SpriteId,
@@ -33,6 +35,10 @@ interface AvatarStore {
   // mic config, or DEFAULT_MIC_CONFIG if the avatar has none yet.
   getMicConfig: () => MicConfig;
   updateMicConfig: (patch: Partial<MicConfig>) => void;
+
+  // Keyboard config — same pattern.
+  getKeyboardConfig: () => KeyboardConfig;
+  updateKeyboardConfig: (patch: Partial<KeyboardConfig>) => void;
 }
 
 let nextSpriteNum = 1;
@@ -160,6 +166,27 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
           inputs: {
             ...state.model.inputs,
             mic: next,
+          },
+        },
+      };
+    }),
+
+  getKeyboardConfig: () => {
+    const cfg = get().model.inputs?.keyboard;
+    return cfg ?? DEFAULT_KEYBOARD_CONFIG;
+  },
+
+  updateKeyboardConfig: (patch) =>
+    set((state) => {
+      const current =
+        state.model.inputs?.keyboard ?? DEFAULT_KEYBOARD_CONFIG;
+      const next: KeyboardConfig = { ...current, ...patch };
+      return {
+        model: {
+          ...state.model,
+          inputs: {
+            ...state.model.inputs,
+            keyboard: next,
           },
         },
       };
