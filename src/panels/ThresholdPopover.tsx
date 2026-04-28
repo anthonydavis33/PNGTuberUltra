@@ -100,7 +100,7 @@ export function ThresholdPopover({ onClose }: ThresholdPopoverProps) {
 
       <div className="threshold-list-header">
         <span>Thresholds</span>
-        <span className="threshold-list-cols">Volume · Hold (ms)</span>
+        <span className="threshold-list-cols">Volume · Hold · Phon</span>
       </div>
 
       <ul className="threshold-list">
@@ -145,6 +145,24 @@ export function ThresholdPopover({ onClose }: ThresholdPopoverProps) {
                 }
               }}
             />
+            <button
+              className={`threshold-phon-toggle ${
+                t.phonemes !== false ? "active" : ""
+              } ${!config.phonemesEnabled ? "disabled-feature" : ""}`}
+              onClick={() =>
+                updateThreshold(t.id, { phonemes: t.phonemes === false })
+              }
+              title={
+                config.phonemesEnabled
+                  ? t.phonemes !== false
+                    ? `Phonemes ON for "${t.name}" — click to disable`
+                    : `Phonemes OFF for "${t.name}" — click to enable`
+                  : "Enable phoneme detection above to use per-threshold control"
+              }
+              aria-label={`Toggle phonemes for ${t.name}`}
+            >
+              P
+            </button>
             <button
               className="threshold-delete"
               onClick={() => removeThreshold(t.id)}

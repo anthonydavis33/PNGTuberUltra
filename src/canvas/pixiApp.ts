@@ -19,6 +19,8 @@ import {
   type FederatedPointerEvent,
 } from "pixi.js";
 import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
+import { computeSpriteVisibility } from "../bindings/evaluate";
+import { useAvatar } from "../store/useAvatar";
 
 export class PixiApp {
   readonly app: Application = new Application();
@@ -66,6 +68,11 @@ export class PixiApp {
     this.resizeObserver.observe(host);
 
     this.setupStageInteraction();
+
+    // Per-frame: evaluate bindings against the current bus state, push results
+    // to PixiSprite properties. This is what makes the avatar respond to mic /
+    // keyboard / hotkey channels.
+    this.app.ticker.add(this.tickBindings);
   }
 
   destroy(): void {
@@ -77,6 +84,9 @@ export class PixiApp {
     if (this.windowPointerUpHandler) {
       window.removeEventListener("pointerup", this.windowPointerUpHandler);
       this.windowPointerUpHandler = null;
+    }
+    if (this.app.ticker) {
+      this.app.ticker.remove(this.tickBindings);
     }
     if (this.app.renderer) {
       this.app.destroy(true, { children: true });
@@ -142,6 +152,16 @@ export class PixiApp {
     if (!this.host) return;
     this.world.x = this.host.clientWidth / 2;
     this.world.y = this.host.clientHeight / 2;
+  };
+
+  private tickBindings = (): void => {
+    if (this.destroyed) return;
+    const sprites = useAvatar.getState().model.sprites;
+    for (const ms of sprites) {
+      const pixiSprite = this.spriteMap.get(ms.id);
+      if (!pixiSprite) continue;
+      pixiSprite.visible = computeSpriteVisibility(ms);
+    }
   };
 
   private setupStageInteraction(): void {

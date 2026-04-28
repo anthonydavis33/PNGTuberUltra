@@ -3,6 +3,7 @@ import {
   AssetEntry,
   AssetId,
   AvatarModel,
+  Binding,
   DEFAULT_ANCHOR,
   DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
@@ -46,6 +47,15 @@ interface AvatarStore {
   // Keyboard config — same pattern.
   getKeyboardConfig: () => KeyboardConfig;
   updateKeyboardConfig: (patch: Partial<KeyboardConfig>) => void;
+
+  // Bindings (per-sprite)
+  addBinding: (spriteId: SpriteId, binding: Binding) => void;
+  removeBinding: (spriteId: SpriteId, bindingId: string) => void;
+  updateBinding: (
+    spriteId: SpriteId,
+    bindingId: string,
+    patch: Partial<Binding>,
+  ) => void;
 
   // File I/O
   /** Replace the current avatar with a freshly loaded one. Unloads existing
@@ -215,6 +225,47 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         },
       };
     }),
+
+  addBinding: (spriteId, binding) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? { ...s, bindings: [...s.bindings, binding] }
+            : s,
+        ),
+      },
+    })),
+
+  removeBinding: (spriteId, bindingId) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? { ...s, bindings: s.bindings.filter((b) => b.id !== bindingId) }
+            : s,
+        ),
+      },
+    })),
+
+  updateBinding: (spriteId, bindingId, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? {
+                ...s,
+                bindings: s.bindings.map((b) =>
+                  b.id === bindingId ? ({ ...b, ...patch } as Binding) : b,
+                ),
+              }
+            : s,
+        ),
+      },
+    })),
 
   loadAvatar: (model, assets, filePath) => {
     const state = get();

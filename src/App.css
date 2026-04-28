@@ -325,6 +325,102 @@ body,
   margin-top: 16px;
 }
 
+/* Properties panel sub-section (Bindings, future Modifiers) ---------- */
+.properties-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.properties-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.properties-section-header .tool-btn {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* Binding rows ------------------------------------------------------- */
+.binding-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.binding-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr) 24px;
+  gap: 4px;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.binding-row:hover {
+  background: transparent;
+}
+
+.binding-row input,
+.binding-row select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.binding-row input:focus,
+.binding-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.binding-channel {
+  font-family: ui-monospace, monospace;
+}
+
+.binding-op {
+  text-align: center;
+  font-family: ui-monospace, monospace;
+  cursor: pointer;
+}
+
+.binding-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.binding-delete:hover {
+  color: #fff;
+  background: var(--danger);
+}
+
 /* Status bar (bottom strip) ------------------------------------------ */
 .status-bar {
   display: flex;
@@ -579,7 +675,7 @@ body,
 
 .threshold-list li {
   display: grid;
-  grid-template-columns: 1fr 64px 64px 26px;
+  grid-template-columns: 1fr 60px 60px 28px 26px;
   gap: 6px;
   margin-bottom: 6px;
   padding: 0;
@@ -627,6 +723,41 @@ body,
 .threshold-delete:hover {
   color: #fff;
   background: var(--danger);
+}
+
+.threshold-phon-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0;
+  transition:
+    background 0.1s,
+    border-color 0.1s,
+    color 0.1s;
+}
+
+.threshold-phon-toggle:hover:not(.disabled-feature) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.threshold-phon-toggle.active {
+  background: rgba(255, 119, 85, 0.2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.threshold-phon-toggle.disabled-feature {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .threshold-actions {

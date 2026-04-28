@@ -151,10 +151,26 @@ class MicSource {
       inputBus.publish("MicHoldProgress", null);
     }
 
-    if (this.config.phonemesEnabled && volume > 0.02) {
-      const phoneme = this.detectPhoneme();
-      inputBus.publish("MicPhoneme", phoneme);
+    if (this.config.phonemesEnabled && newState !== null && volume > 0.02) {
+      // Each threshold can opt out of phonemes (undefined === true for
+      // backward compat).
+      const currentThreshold = this.config.thresholds.find(
+        (t) => t.name === newState,
+      );
+      const wantsPhonemes = currentThreshold?.phonemes !== false;
+      if (wantsPhonemes) {
+        const phoneme = this.detectPhoneme();
+        inputBus.publish("MicPhoneme", phoneme);
+      } else {
+        // Reset detection state so resuming a phoneme-enabled state doesn't
+        // start with stale memory.
+        this.currentPhoneme = null;
+        this.phonemeSwitchedAt = 0;
+        inputBus.publish("MicPhoneme", null);
+      }
     } else {
+      this.currentPhoneme = null;
+      this.phonemeSwitchedAt = 0;
       inputBus.publish("MicPhoneme", null);
     }
 

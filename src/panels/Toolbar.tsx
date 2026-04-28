@@ -232,7 +232,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 2d — save / load .pnxr</span>
+      <span className="status">Phase 3a — visibility bindings</span>
     </header>
   );
 }

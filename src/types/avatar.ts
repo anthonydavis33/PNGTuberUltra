@@ -31,12 +31,48 @@ export interface Sprite {
   asset?: AssetId;
   transform: Transform;
   anchor: Anchor;
+  /** Base visibility set by the user. Bindings AND with this — a sprite hidden
+   *  in the model never becomes visible via bindings. */
   visible: boolean;
-  /** Forward-compat: empty in phase 1, populated by later phases. */
-  bindings: unknown[];
-  /** Forward-compat: empty in phase 1, populated by later phases. */
+  /** Bindings consume bus channels and drive sprite properties. Phase 3a:
+   *  visibility only. Phase 3b will widen Binding to include transform targets. */
+  bindings: Binding[];
+  /** Forward-compat: empty until phase 3c. */
   modifiers: unknown[];
 }
+
+// ---------------------------------------------------------------- Bindings
+
+export type ConditionOp = "equals" | "notEquals" | "in";
+
+/**
+ * Condition for visibility bindings. `value` is always a single string;
+ * for `in`, it's parsed as a comma-separated list at eval time.
+ *
+ * Comparison is string-based: the channel value is stringified
+ * (booleans become "true"/"false", null becomes ""), then compared.
+ */
+export interface BindingCondition {
+  op: ConditionOp;
+  value: string;
+}
+
+export type BindingTarget = "visible";
+
+/**
+ * A binding that reads a bus channel and contributes to a sprite property.
+ * Phase 3a: target is always "visible". Multiple visibility bindings on a
+ * sprite are AND-ed together (every binding must match).
+ */
+export interface VisibilityBinding {
+  id: string;
+  target: "visible";
+  /** Bus channel name (e.g. "MicState", "Expression", "Costume.hat"). */
+  input: string;
+  condition: BindingCondition;
+}
+
+export type Binding = VisibilityBinding;
 
 export interface AvatarModel {
   schema: 1;
@@ -67,6 +103,14 @@ export interface MicThreshold {
   /** ms to hold after volume drops below this threshold's minVolume before
    *  MicState falls to null. */
   holdMs: number;
+  /**
+   * Per-threshold phoneme detection toggle. When false, MicPhoneme stays null
+   * while this threshold is the active state — useful for "screaming" or
+   * "loud" states where the avatar is meant to use a single sprite regardless
+   * of vowel. Defaults to true (undefined === true) for backward compat.
+   * Has no effect unless the global MicConfig.phonemesEnabled is also true.
+   */
+  phonemes?: boolean;
 }
 
 /**
