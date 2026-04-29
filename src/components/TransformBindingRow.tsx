@@ -125,6 +125,18 @@ export function TransformBindingRow({
           updateMapping({ outMax: v }),
         )}
       </div>
+
+      <label
+        className="transform-binding-additive"
+        title="When checked, the output is added to the sprite's base value (gaze offsets the sprite around its base position). When unchecked, output replaces the base."
+      >
+        <input
+          type="checkbox"
+          checked={binding.mapping.additive ?? true}
+          onChange={(e) => updateMapping({ additive: e.target.checked })}
+        />
+        <span>Additive (offset from base)</span>
+      </label>
     </li>
   );
 }

@@ -56,7 +56,13 @@ export function StatusBar() {
   const lastKey = useInputValue<string | null>("KeyEvent");
   const region = useInputValue<string | null>("KeyRegion");
   const headYaw = useInputValue<number>("HeadYaw") ?? 0;
+  const headPitch = useInputValue<number>("HeadPitch") ?? 0;
+  const headRoll = useInputValue<number>("HeadRoll") ?? 0;
   const mouthOpen = useInputValue<number>("MouthOpen") ?? 0;
+  const browRaise = useInputValue<number>("BrowRaise") ?? 0;
+  const eyesClosed = useInputValue<number>("EyesClosed") ?? 0;
+  const gazeX = useInputValue<number>("GazeX") ?? 0;
+  const gazeY = useInputValue<number>("GazeY") ?? 0;
 
   // Keep mic source config in sync with the avatar.
   useEffect(() => {
@@ -123,6 +129,7 @@ export function StatusBar() {
 
   return (
     <footer className="status-bar">
+      <div className="status-bar-row status-bar-row-primary">
       {/* ============================ MIC SECTION ============================ */}
       <section className="status-section">
         <button
@@ -210,38 +217,6 @@ export function StatusBar() {
         )}
       </section>
 
-      {/* ============================ WEBCAM SECTION ============================ */}
-      <section className="status-section">
-        <button
-          className={`mic-toggle ${isCamRunning ? "live" : ""}`}
-          onClick={handleCamToggle}
-          disabled={isCamLoading}
-          title={
-            isCamRunning
-              ? "Stop webcam tracking"
-              : "Start webcam — feeds head pose, mouth, gaze, and blink to bindings"
-          }
-        >
-          {isCamRunning ? <Camera size={14} /> : <CameraOff size={14} />}
-          <span>
-            {isCamLoading ? "Loading…" : isCamRunning ? "Live" : "Off"}
-          </span>
-        </button>
-
-        <div className="status-values">
-          <span className="status-value">
-            <span className="status-label">Yaw</span>
-            <span className="status-num">{headYaw.toFixed(1)}°</span>
-          </span>
-          <span className="status-value">
-            <span className="status-label">Mouth</span>
-            <span className="status-num">{mouthOpen.toFixed(2)}</span>
-          </span>
-        </div>
-
-        {camError && <span className="status-error">{camError}</span>}
-      </section>
-
       {/* ============================ KEYBOARD SECTION ============================ */}
       <section className="status-section status-section-right">
         <Keyboard size={14} className="status-icon" />
@@ -271,6 +246,65 @@ export function StatusBar() {
           <KeyboardPopover onClose={() => setShowKbPopover(false)} />
         )}
       </section>
+      </div>
+
+      {/* ============================ WEBCAM ROW (full readouts) =================== */}
+      <div className="status-bar-row status-bar-row-secondary">
+        <section className="status-section">
+          <button
+            className={`mic-toggle ${isCamRunning ? "live" : ""}`}
+            onClick={handleCamToggle}
+            disabled={isCamLoading}
+            title={
+              isCamRunning
+                ? "Stop webcam tracking"
+                : "Start webcam — feeds head pose, mouth, gaze, and blink to bindings"
+            }
+          >
+            {isCamRunning ? <Camera size={14} /> : <CameraOff size={14} />}
+            <span>
+              {isCamLoading ? "Loading…" : isCamRunning ? "Live" : "Off"}
+            </span>
+          </button>
+
+          <div className="status-values status-values-webcam">
+            <span className="status-value">
+              <span className="status-label">Yaw</span>
+              <span className="status-num">{headYaw.toFixed(1)}°</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Pitch</span>
+              <span className="status-num">{headPitch.toFixed(1)}°</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Roll</span>
+              <span className="status-num">{headRoll.toFixed(1)}°</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Mouth</span>
+              <span className="status-num">{mouthOpen.toFixed(2)}</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Brow</span>
+              <span className="status-num">{browRaise.toFixed(2)}</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Eyes</span>
+              <span className="status-num">{eyesClosed.toFixed(2)}</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">GazeX</span>
+              <span className="status-num">{gazeX.toFixed(2)}</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">GazeY</span>
+              <span className="status-num">{gazeY.toFixed(2)}</span>
+            </span>
+          </div>
+
+          {camError && <span className="status-error">{camError}</span>}
+        </section>
+      </div>
     </footer>
   );
 }

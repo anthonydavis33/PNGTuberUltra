@@ -73,8 +73,12 @@ class MicSource {
 
   constructor(config: MicConfig) {
     this.config = config;
-    // Publish initial values so subscribers see something immediately.
-    inputBus.publish("MicVolume", 0);
+    // Publish null initially — bindings on a continuous channel like
+    // MicVolume should NOT fire while the source is off, otherwise a
+    // `MicVolume → scaleY` binding would silently freeze the sprite's
+    // scale at the mapping's outMin even with the mic disabled.
+    // Display UIs use `?? 0` fallbacks.
+    inputBus.publish("MicVolume", null);
     inputBus.publish("MicState", null);
     inputBus.publish("MicPhoneme", null);
     inputBus.publish("MicHoldProgress", null);
@@ -113,7 +117,8 @@ class MicSource {
     this.holdStartTime = null;
     this.currentPhoneme = null;
     this.phonemeSwitchedAt = 0;
-    inputBus.publish("MicVolume", 0);
+    // Publish null on stop so bindings stop firing — see constructor.
+    inputBus.publish("MicVolume", null);
     inputBus.publish("MicState", null);
     inputBus.publish("MicPhoneme", null);
     inputBus.publish("MicHoldProgress", null);

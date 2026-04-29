@@ -68,9 +68,13 @@ class WebcamSource {
   };
 
   constructor() {
-    // Initialize bus channels at 0 so consumers see numeric values from
-    // the moment they subscribe.
-    for (const c of WEBCAM_CHANNELS) inputBus.publish(c, 0);
+    // Initialize bus channels at null so transform bindings DON'T fire
+    // when webcam is off — `null` coerces to non-numeric in valueAsNumber,
+    // so the binding evaluator skips the override and leaves the sprite's
+    // base transform alone. UIs read these with `?? 0` fallbacks for
+    // display. Publishing 0 here would silently override manual transform
+    // edits on any sprite bound to a webcam channel.
+    for (const c of WEBCAM_CHANNELS) inputBus.publish(c, null);
   }
 
   isRunning(): boolean {
@@ -134,7 +138,9 @@ class WebcamSource {
 
     for (const c of WEBCAM_CHANNELS) {
       this.smoothed[c] = 0;
-      inputBus.publish(c, 0);
+      // Publish null on stop so bindings stop firing — see constructor
+      // comment for why this matters.
+      inputBus.publish(c, null);
     }
   }
 

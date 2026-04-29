@@ -32,7 +32,7 @@ body,
 
 .app {
   display: grid;
-  grid-template-rows: 36px 1fr 32px;
+  grid-template-rows: 36px 1fr auto;
   height: 100vh;
 }
 
@@ -554,6 +554,27 @@ body,
   text-align: center;
 }
 
+.transform-binding-additive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  margin-top: 4px;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.transform-binding-additive input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.transform-binding-additive:has(input:checked) {
+  color: var(--accent);
+}
+
 /* NumberField inside a transform-binding mapping row: hide the empty drag
  * label, lay out the input row-style, shrink the input to fit the cramped
  * 1fr column. */
@@ -852,14 +873,30 @@ body,
 /* Status bar (bottom strip) ------------------------------------------ */
 .status-bar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 12px;
+  flex-direction: column;
   background: var(--panel-bg);
   border-top: 1px solid var(--border);
   font-size: 12px;
   user-select: none;
   position: relative;
+}
+
+.status-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  height: 32px;
+}
+
+.status-bar-row-secondary {
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.status-values-webcam {
+  flex-wrap: wrap;
+  gap: 14px 16px;
 }
 
 .mic-toggle {

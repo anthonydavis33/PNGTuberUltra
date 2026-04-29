@@ -116,9 +116,46 @@ export function evaluateTransformBinding(b: TransformBinding): number | null {
 }
 
 /**
+ * Read the sprite's base transform value for a given target. For targets
+ * the model doesn't store explicitly (alpha, frame), returns 0 — additive
+ * bindings on those degenerate to absolute behavior, which is what you
+ * want for "the binding controls this property entirely."
+ */
+function baseTransformValue(
+  sprite: Sprite,
+  target: TransformTarget,
+): number {
+  switch (target) {
+    case "x":
+      return sprite.transform.x;
+    case "y":
+      return sprite.transform.y;
+    case "rotation":
+      return sprite.transform.rotation;
+    case "scaleX":
+      return sprite.transform.scaleX;
+    case "scaleY":
+      return sprite.transform.scaleY;
+    case "alpha":
+      return 0;
+  }
+}
+
+/**
  * Compute every transform-property override active on a sprite.
  * Multiple transform bindings on the same target are last-wins
  * (the model's bindings array order).
+ *
+ * Additive vs absolute (linear mappings):
+ *   - additive (default): override = base + mapped output. Use for
+ *     tracking-style bindings — gaze nudges sprite around its base
+ *     position, mic volume opens mouth around base scale, etc.
+ *   - absolute: override = mapped output. Use when the binding fully
+ *     owns the property regardless of base.
+ *
+ * For x/y/rotation/scaleX/scaleY, base is the sprite's stored value.
+ * For alpha/frame, base is 0 — additive on these is functionally absolute,
+ * which is what users want for "this binding sets the alpha/frame directly."
  */
 export function applyTransformBindings(
   sprite: Sprite,
@@ -128,7 +165,12 @@ export function applyTransformBindings(
     if (!isTransformBinding(b)) continue;
     const value = evaluateTransformBinding(b);
     if (value === null) continue;
-    overrides[b.target] = value;
+
+    const isAdditive =
+      b.mapping.type === "linear" && (b.mapping.additive ?? true);
+    overrides[b.target] = isAdditive
+      ? baseTransformValue(sprite, b.target) + value
+      : value;
   }
   return overrides;
 }

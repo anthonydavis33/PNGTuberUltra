@@ -109,6 +109,11 @@ export type BindingTarget = "visible" | TransformTarget;
  *   inMin, inMax  — input range from the channel value
  *   outMin, outMax — output range applied to the sprite property
  *   clamped (default true) — clamp output to [outMin, outMax]
+ *   additive (default true) — when true, the output is added to the sprite's
+ *     base transform value (so e.g. `GazeX → x` offsets the sprite around
+ *     wherever you've placed it, instead of snapping it to canvas center).
+ *     When false, output replaces the base — useful for absolute-control
+ *     bindings like "this hotkey forces alpha to 0.5".
  */
 export interface BindingMappingLinear {
   type: "linear";
@@ -117,6 +122,7 @@ export interface BindingMappingLinear {
   outMin: number;
   outMax: number;
   clamped?: boolean;
+  additive?: boolean;
 }
 
 export type BindingMapping = BindingMappingLinear;
