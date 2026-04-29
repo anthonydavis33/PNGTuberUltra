@@ -15,6 +15,38 @@ const genAssetId = (): string => `asset-${nextAssetNum++}`;
 
 const SUPPORTED_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
 
+/**
+ * Extract per-pixel alpha from an HTMLImageElement via a hidden 2D canvas.
+ * Used by the per-pixel hit-testing path in PixiApp so clicks pass through
+ * transparent areas of a sprite to whatever's underneath.
+ *
+ * Returns undefined if the canvas is tainted (cross-origin) or 2D context
+ * is unavailable — caller falls back to rectangular hit testing in that case.
+ */
+function extractAlphaMap(img: HTMLImageElement): Uint8Array | undefined {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (w === 0 || h === 0) return undefined;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+  ctx.drawImage(img, 0, 0);
+  let pixels: ImageData;
+  try {
+    pixels = ctx.getImageData(0, 0, w, h);
+  } catch {
+    return undefined;
+  }
+  const data = pixels.data;
+  const alpha = new Uint8Array(w * h);
+  for (let i = 0; i < alpha.length; i++) {
+    alpha[i] = data[i * 4 + 3];
+  }
+  return alpha;
+}
+
 export async function loadFileAsAsset(file: File): Promise<AssetEntry> {
   const id = genAssetId();
   const blobUrl = URL.createObjectURL(file);
@@ -38,6 +70,9 @@ export async function loadFileAsAsset(file: File): Promise<AssetEntry> {
     blobUrl,
     blob: file,
     mimeType: file.type || "image/png",
+    width: img.naturalWidth,
+    height: img.naturalHeight,
+    alphaMap: extractAlphaMap(img),
   };
 }
 
@@ -72,6 +107,9 @@ export async function loadBytesAsAsset(args: {
     blobUrl,
     blob,
     mimeType: args.mimeType,
+    width: img.naturalWidth,
+    height: img.naturalHeight,
+    alphaMap: extractAlphaMap(img),
   };
 }
 

@@ -312,6 +312,14 @@ export interface AssetEntry {
   blob: Blob;
   /** MIME type, used to choose the correct file extension in assets/. */
   mimeType: string;
+  /** Image dimensions, captured at load time. Match the alphaMap layout. */
+  width: number;
+  height: number;
+  /** Per-pixel alpha values for hit-testing transparent areas. Length =
+   *  width * height; index = y * width + x. Undefined if pixel data
+   *  couldn't be read (cross-origin or other browser restrictions); hit
+   *  testing falls back to rectangular bounds in that case. */
+  alphaMap?: Uint8Array;
 }
 
 export const DEFAULT_TRANSFORM: Transform = {

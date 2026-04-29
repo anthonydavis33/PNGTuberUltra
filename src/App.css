@@ -235,7 +235,15 @@ body,
 .panel .empty {
   color: var(--text-dim);
   font-style: italic;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 0;
+}
+
+.panel .empty strong {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
 }
 
 /* Property inputs (NumberField) -------------------------------------- */
@@ -533,6 +541,8 @@ body,
   display: flex;
   gap: 4px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .properties-section-actions .tool-btn {
@@ -540,6 +550,110 @@ body,
   letter-spacing: normal;
   font-size: 11px;
   padding: 3px 6px;
+}
+
+/* Show On button + popover -------------------------------------------- */
+.show-on-button.active {
+  background: rgba(255, 119, 85, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.show-on-popover {
+  /* Rendered via React portal at the document body so the Properties
+   * panel's overflow:auto doesn't clip it. Position is set inline from
+   * the trigger button's bounding rect; the static styles here just
+   * size and theme it. */
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.show-on-explainer {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: normal;
+}
+
+.show-on-explainer strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.show-on-section {
+  margin-bottom: 14px;
+}
+
+.show-on-section:last-child {
+  margin-bottom: 0;
+}
+
+.show-on-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.show-on-section-header h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.show-on-section-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.show-on-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.show-on-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.show-on-checkbox:hover {
+  border-color: var(--accent);
+}
+
+.show-on-checkbox input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.show-on-checkbox:has(input:checked) {
+  background: rgba(255, 119, 85, 0.18);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Modifier rows ------------------------------------------------------ */
@@ -1372,4 +1486,37 @@ body,
   display: block;
   width: 100% !important;
   height: 100% !important;
+}
+
+/* Drag-and-drop import affordance — appears while files are dragged over. */
+.pixi-host.drag-over {
+  background: rgba(255, 119, 85, 0.06);
+}
+
+.pixi-host.drag-over::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.pixi-host.drag-over::after {
+  content: "Drop images to add as sprites";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 20, 20, 0.85);
+  color: var(--accent);
+  padding: 12px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  z-index: 11;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }

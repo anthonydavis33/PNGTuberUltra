@@ -14,10 +14,22 @@
 //   - KeyEvent / unknown → null (free text)
 
 import {
+  DEFAULT_KEYBOARD_CONFIG,
+  DEFAULT_MIC_CONFIG,
   type AvatarModel,
   type BindingKind,
+  type KeyboardConfig,
+  type MicConfig,
   PHONEMES,
 } from "../types/avatar";
+
+/** Fall back to defaults when the avatar hasn't explicitly set its config —
+ *  mirrors what the runtime input sources do, so UIs see the same channels
+ *  that will actually fire. */
+const effectiveMic = (model: AvatarModel): MicConfig =>
+  model.inputs?.mic ?? DEFAULT_MIC_CONFIG;
+const effectiveKeyboard = (model: AvatarModel): KeyboardConfig =>
+  model.inputs?.keyboard ?? DEFAULT_KEYBOARD_CONFIG;
 
 /**
  * MicPhoneme is only useful when the global phoneme feature is on AND at
@@ -25,9 +37,9 @@ import {
  * be null and showing it just confuses the binding UI.
  */
 function isPhonemeChannelReachable(model: AvatarModel): boolean {
-  const mic = model.inputs?.mic;
-  if (!mic?.phonemesEnabled) return false;
-  return (mic.thresholds ?? []).some((t) => t.phonemes !== false);
+  const mic = effectiveMic(model);
+  if (!mic.phonemesEnabled) return false;
+  return mic.thresholds.some((t) => t.phonemes !== false);
 }
 
 /**
@@ -55,7 +67,7 @@ export function getKnownChannels(
   }
 
   const userChannels = new Set<string>();
-  for (const hk of model.inputs?.keyboard?.hotkeys ?? []) {
+  for (const hk of effectiveKeyboard(model).hotkeys) {
     const c = hk.channel.trim();
     if (c) userChannels.add(c);
   }
@@ -78,15 +90,17 @@ export function getValuesForChannel(
 ): string[] | null {
   switch (channel) {
     case "MicState": {
-      const thresholds = model.inputs?.mic?.thresholds ?? [];
-      const names = thresholds.map((t) => t.name.trim()).filter(Boolean);
+      const names = effectiveMic(model)
+        .thresholds.map((t) => t.name.trim())
+        .filter(Boolean);
       return names.length > 0 ? names : null;
     }
     case "MicPhoneme":
       return [...PHONEMES];
     case "KeyRegion": {
-      const regions = model.inputs?.keyboard?.regions ?? [];
-      const names = regions.map((r) => r.name.trim()).filter(Boolean);
+      const names = effectiveKeyboard(model)
+        .regions.map((r) => r.name.trim())
+        .filter(Boolean);
       return names.length > 0 ? names : null;
     }
     case "KeyEvent": {
@@ -94,11 +108,12 @@ export function getValuesForChannel(
       // config (regions + hotkeys). Keeps the dropdown relevant without
       // listing the entire QWERTY space. Fall back to free text when the
       // avatar has no keyboard config yet.
+      const kb = effectiveKeyboard(model);
       const keys = new Set<string>();
-      for (const r of model.inputs?.keyboard?.regions ?? []) {
+      for (const r of kb.regions) {
         for (const k of r.keys) keys.add(k);
       }
-      for (const hk of model.inputs?.keyboard?.hotkeys ?? []) {
+      for (const hk of kb.hotkeys) {
         const k = hk.key.trim();
         if (k) keys.add(k);
       }
@@ -106,7 +121,7 @@ export function getValuesForChannel(
     }
     default: {
       // User-defined channel — look at hotkeys writing to it.
-      const hotkeys = (model.inputs?.keyboard?.hotkeys ?? []).filter(
+      const hotkeys = effectiveKeyboard(model).hotkeys.filter(
         (h) => h.channel.trim() === channel,
       );
       if (hotkeys.length === 0) return null;

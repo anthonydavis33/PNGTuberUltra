@@ -71,6 +71,7 @@ export class PixiApp {
     this.app.stage.addChild(this.world);
     this.app.stage.addChild(this.overlays);
     this.overlays.eventMode = "none";
+
     this.anchorDot = createAnchorDot();
     this.anchorDot.visible = false;
     this.overlays.addChild(this.anchorDot);
@@ -292,6 +293,28 @@ export class PixiApp {
     sprite.anchor.set(0.5);
     sprite.cursor = "grab";
     sprite.eventMode = "static";
+
+    // Per-pixel hit testing — clicks on transparent regions of the texture
+    // pass through to whatever sprite is rendered below. Falls back to the
+    // default rectangular hit area when no alpha map is available (the
+    // placeholder rectangle, or assets where pixel data couldn't be read).
+    if (ms.asset) {
+      const asset = assets[ms.asset];
+      if (asset?.alphaMap && asset.width > 0 && asset.height > 0) {
+        const alphaMap = asset.alphaMap;
+        const w = asset.width;
+        const h = asset.height;
+        const ALPHA_THRESHOLD = 10;
+        sprite.hitArea = {
+          contains: (x: number, y: number): boolean => {
+            const px = Math.floor(x + sprite.anchor.x * w);
+            const py = Math.floor(y + sprite.anchor.y * h);
+            if (px < 0 || py < 0 || px >= w || py >= h) return false;
+            return alphaMap[py * w + px] > ALPHA_THRESHOLD;
+          },
+        };
+      }
+    }
 
     sprite.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();

@@ -112,7 +112,10 @@ export function LayerTree() {
     <aside className="panel layer-tree">
       <h2>Layers</h2>
       {sprites.length === 0 ? (
-        <p className="empty">No sprites yet — click "Add Sprite" above.</p>
+        <p className="empty">
+          No sprites yet — drag PNG / JPG / WebP files onto the canvas, or
+          click <strong>+ Add Sprite</strong> in the toolbar.
+        </p>
       ) : (
         <DndContext
           sensors={sensors}

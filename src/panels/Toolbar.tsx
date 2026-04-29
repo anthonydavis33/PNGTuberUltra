@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FolderOpen, Plus, Save } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
@@ -7,6 +7,9 @@ import { loadFilesAsAssets } from "../canvas/assetLoader";
 import { packAvatar, unpackAvatar } from "../io/pnxr";
 import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
 import { shortPath } from "../utils/path";
+
+/** Detect modifier-key for save/open shortcuts. Cmd on Mac, Ctrl elsewhere. */
+const isModifier = (e: KeyboardEvent): boolean => e.ctrlKey || e.metaKey;
 
 const PNXR_FILTERS = [
   { name: "PNGTuberUltra Avatar", extensions: ["pnxr"] },
@@ -163,6 +166,32 @@ export function Toolbar() {
     }
   };
 
+  // ---- Keyboard shortcuts: Ctrl+S, Ctrl+Shift+S, Ctrl+O -----------
+  // The handlers above close over component state, so they're not stable
+  // across renders. We hold the latest set in a ref so the keydown
+  // listener (bound once) always invokes the freshest version.
+  const handlersRef = useRef({ handleSave, handleSaveAs, handleOpen });
+  useEffect(() => {
+    handlersRef.current = { handleSave, handleSaveAs, handleOpen };
+  });
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isModifier(e)) return;
+      const key = e.key.toLowerCase();
+      if (key === "s") {
+        e.preventDefault();
+        if (e.shiftKey) void handlersRef.current.handleSaveAs();
+        else void handlersRef.current.handleSave();
+      } else if (key === "o") {
+        e.preventDefault();
+        void handlersRef.current.handleOpen();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <header className="toolbar">
       <span className="brand">
@@ -180,7 +209,7 @@ export function Toolbar() {
         className="tool-btn"
         onClick={onPickFiles}
         disabled={isLoadingAssets}
-        title="Add one or more PNG/JPG/WebP images as sprites"
+        title="Add image sprites — click to pick files, or drag PNG / JPG / WebP onto the canvas"
       >
         <Plus size={14} />
         {isLoadingAssets ? "Loading..." : "Add Sprite"}
@@ -192,7 +221,7 @@ export function Toolbar() {
         className="tool-btn"
         onClick={handleOpen}
         disabled={isFileBusy}
-        title="Open a .pnxr avatar"
+        title="Open a .pnxr avatar (Ctrl+O)"
       >
         <FolderOpen size={14} />
         Open
@@ -204,8 +233,8 @@ export function Toolbar() {
         disabled={isFileBusy}
         title={
           currentFilePath
-            ? `Save to ${shortPath(currentFilePath)}`
-            : "Save (will prompt for location)"
+            ? `Save to ${shortPath(currentFilePath)} (Ctrl+S)`
+            : "Save (Ctrl+S — will prompt for location)"
         }
       >
         <Save size={14} />
@@ -216,7 +245,7 @@ export function Toolbar() {
         className="tool-btn"
         onClick={handleSaveAs}
         disabled={isFileBusy}
-        title="Save to a new location"
+        title="Save to a new location (Ctrl+Shift+S)"
       >
         Save As…
       </button>
@@ -232,7 +261,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 3c — modifiers</span>
+      <span className="status">Phase 3d — polish + Show On</span>
     </header>
   );
 }

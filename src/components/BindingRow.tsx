@@ -85,6 +85,7 @@ export function BindingRow({
         onChange={(e) =>
           updateCondition({ op: e.target.value as ConditionOp })
         }
+        title="Comparison: = matches one value, ≠ excludes it, in matches any of a comma-separated list"
       >
         <option value="equals">=</option>
         <option value="notEquals">≠</option>

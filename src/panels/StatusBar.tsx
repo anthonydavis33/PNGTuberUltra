@@ -87,7 +87,11 @@ export function StatusBar() {
         <button
           className={`mic-toggle ${isMicRunning ? "live" : ""}`}
           onClick={handleMicToggle}
-          title={isMicRunning ? "Stop microphone" : "Start microphone"}
+          title={
+            isMicRunning
+              ? "Stop microphone capture"
+              : "Start mic — feeds MicVolume / MicState / MicPhoneme to bindings"
+          }
         >
           {isMicRunning ? <Mic size={14} /> : <MicOff size={14} />}
           <span>{isMicRunning ? "Live" : "Off"}</span>
@@ -154,7 +158,7 @@ export function StatusBar() {
             setShowMicPopover((v) => !v);
             setShowKbPopover(false);
           }}
-          title="Mic settings"
+          title="Mic settings — thresholds, hold times, phoneme detection"
           aria-label="Mic settings"
         >
           <Settings size={14} />
@@ -184,7 +188,7 @@ export function StatusBar() {
             setShowKbPopover((v) => !v);
             setShowMicPopover(false);
           }}
-          title="Keyboard settings"
+          title="Keyboard settings — regions, hotkeys"
           aria-label="Keyboard settings"
         >
           <Settings size={14} />

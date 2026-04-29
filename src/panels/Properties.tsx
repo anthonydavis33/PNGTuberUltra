@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
-import { Plus, RotateCcw } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Plus, RotateCcw, ListChecks } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import { NumberField } from "../components/NumberField";
 import { BindingRow } from "../components/BindingRow";
 import { TransformBindingRow } from "../components/TransformBindingRow";
 import { ModifierRow } from "../components/ModifierRow";
+import { ShowOnPopover } from "./ShowOnPopover";
 import { getKnownChannels } from "../bindings/channels";
 import {
   DEFAULT_TRANSFORM,
@@ -35,6 +36,8 @@ export function Properties() {
   const model = useAvatar((s) => s.model);
   const [pendingModifierType, setPendingModifierType] =
     useState<ModifierType>("spring");
+  const [showOnOpen, setShowOnOpen] = useState(false);
+  const showOnButtonRef = useRef<HTMLButtonElement>(null);
 
   const visibilityChannels = useMemo(
     () => getKnownChannels(model, "visibility"),
@@ -49,7 +52,10 @@ export function Properties() {
     return (
       <aside className="panel properties">
         <h2>Properties</h2>
-        <p className="empty">No sprite selected</p>
+        <p className="empty">
+          No sprite selected. Click a sprite on the canvas or in the Layers
+          panel to edit its transform, bindings, and modifiers.
+        </p>
       </aside>
     );
   }
@@ -205,9 +211,27 @@ export function Properties() {
           <span>Bindings</span>
           <div className="properties-section-actions">
             <button
+              ref={showOnButtonRef}
+              onClick={() => setShowOnOpen((v) => !v)}
+              className={`tool-btn show-on-button ${
+                showOnOpen ? "active" : ""
+              }`}
+              title="Recommended: pick states / phonemes / hotkeys the sprite shows on with checkboxes"
+            >
+              <ListChecks size={12} />
+              Show On
+            </button>
+            {showOnOpen && (
+              <ShowOnPopover
+                spriteId={sprite.id}
+                onClose={() => setShowOnOpen(false)}
+                anchorRef={showOnButtonRef}
+              />
+            )}
+            <button
               onClick={addNewVisibilityBinding}
               className="tool-btn"
-              title="Add a visibility binding"
+              title="Advanced — add a manual visibility binding (channel / op / value)"
             >
               <Plus size={12} />
               Visibility
@@ -215,7 +239,7 @@ export function Properties() {
             <button
               onClick={addNewTransformBinding}
               className="tool-btn"
-              title="Add a transform binding"
+              title="Drive a sprite property (X, Y, rotation, scale, alpha) from a numeric channel like MicVolume"
             >
               <Plus size={12} />
               Transform
@@ -225,7 +249,9 @@ export function Properties() {
 
         {sprite.bindings.length === 0 ? (
           <p className="empty">
-            No bindings — sprite always visible at base transform.
+            No bindings — sprite always visible at its base transform. Use{" "}
+            <strong>Show On</strong> to make it react to mic state, hotkeys,
+            or key regions.
           </p>
         ) : (
           <ul className="binding-list">
