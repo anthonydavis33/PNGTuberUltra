@@ -33,8 +33,11 @@ const WASM_URL =
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
-/** EMA smoothing factor — higher = more responsive, less smooth. */
-const SMOOTHING = 0.4;
+/** Default EMA smoothing factor — higher = more responsive, less smooth.
+ *  Tunable at runtime via WebcamSource.setSmoothing(). */
+const DEFAULT_SMOOTHING = 0.4;
+const MIN_SMOOTHING = 0.05;
+const MAX_SMOOTHING = 1.0;
 
 export const WEBCAM_CHANNELS = [
   "HeadYaw",
@@ -67,6 +70,13 @@ class WebcamSource {
     GazeY: 0,
   };
 
+  /** Current EMA smoothing factor. Changeable at runtime. */
+  private smoothingFactor: number = DEFAULT_SMOOTHING;
+
+  /** Calibration offset subtracted from head-pose channels so the user's
+   *  neutral pose reads as 0/0/0. Set by calibrate(). */
+  private calibrationOffset = { yaw: 0, pitch: 0, roll: 0 };
+
   constructor() {
     // Initialize bus channels at null so transform bindings DON'T fire
     // when webcam is off — `null` coerces to non-numeric in valueAsNumber,
@@ -84,6 +94,36 @@ class WebcamSource {
   /** True between getUserMedia success and FaceLandmarker.create() resolving. */
   isInitializing(): boolean {
     return this.stream !== null && !this.ready;
+  }
+
+  getSmoothing(): number {
+    return this.smoothingFactor;
+  }
+
+  setSmoothing(value: number): void {
+    this.smoothingFactor = Math.max(
+      MIN_SMOOTHING,
+      Math.min(MAX_SMOOTHING, value),
+    );
+  }
+
+  /** Capture the current smoothed head pose as the new neutral / zero
+   *  point. After this, looking straight ahead reads as Yaw=0/Pitch=0/Roll=0. */
+  calibrate(): void {
+    this.calibrationOffset = {
+      yaw: this.smoothed.HeadYaw,
+      pitch: this.smoothed.HeadPitch,
+      roll: this.smoothed.HeadRoll,
+    };
+  }
+
+  resetCalibration(): void {
+    this.calibrationOffset = { yaw: 0, pitch: 0, roll: 0 };
+  }
+
+  isCalibrated(): boolean {
+    const c = this.calibrationOffset;
+    return c.yaw !== 0 || c.pitch !== 0 || c.roll !== 0;
   }
 
   async start(): Promise<void> {
@@ -215,8 +255,18 @@ class WebcamSource {
   }
 
   private publishSmoothed(key: WebcamChannel, raw: number): void {
-    this.smoothed[key] = SMOOTHING * raw + (1 - SMOOTHING) * this.smoothed[key];
-    inputBus.publish(key, this.smoothed[key]);
+    const a = this.smoothingFactor;
+    this.smoothed[key] = a * raw + (1 - a) * this.smoothed[key];
+
+    // Apply calibration offset for head-pose channels only — mouth, brow,
+    // eyes, and gaze are already normalized blendshapes whose neutral
+    // value is 0.
+    let published = this.smoothed[key];
+    if (key === "HeadYaw") published -= this.calibrationOffset.yaw;
+    else if (key === "HeadPitch") published -= this.calibrationOffset.pitch;
+    else if (key === "HeadRoll") published -= this.calibrationOffset.roll;
+
+    inputBus.publish(key, published);
   }
 }
 

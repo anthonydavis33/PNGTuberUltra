@@ -24,6 +24,7 @@ import { useAvatar } from "../store/useAvatar";
 import { useInputValue } from "../hooks/useInputValue";
 import { ThresholdPopover } from "./ThresholdPopover";
 import { KeyboardPopover } from "./KeyboardPopover";
+import { WebcamPopover } from "./WebcamPopover";
 
 export function StatusBar() {
   const micConfig = useAvatar((s) => s.model.inputs?.mic);
@@ -39,6 +40,7 @@ export function StatusBar() {
   const [isCamRunning, setIsCamRunning] = useState(false);
   const [isCamLoading, setIsCamLoading] = useState(false);
   const [camError, setCamError] = useState<string | null>(null);
+  const [showCamPopover, setShowCamPopover] = useState(false);
 
   // Eager-init the always-on singletons so InputBus has values to read on
   // first frame. Webcam is start-on-demand only.
@@ -303,6 +305,23 @@ export function StatusBar() {
           </div>
 
           {camError && <span className="status-error">{camError}</span>}
+
+          <button
+            className="status-gear"
+            onClick={() => {
+              setShowCamPopover((v) => !v);
+              setShowMicPopover(false);
+              setShowKbPopover(false);
+            }}
+            title="Webcam settings — calibration, smoothing"
+            aria-label="Webcam settings"
+          >
+            <Settings size={14} />
+          </button>
+
+          {showCamPopover && (
+            <WebcamPopover onClose={() => setShowCamPopover(false)} />
+          )}
         </section>
       </div>
     </footer>
