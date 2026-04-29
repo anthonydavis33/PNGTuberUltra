@@ -22,6 +22,7 @@ import {
   type MicConfig,
   PHONEMES,
 } from "../types/avatar";
+import { WEBCAM_CHANNELS } from "../inputs/WebcamSource";
 
 /** Fall back to defaults when the avatar hasn't explicitly set its config —
  *  mirrors what the runtime input sources do, so UIs see the same channels
@@ -63,7 +64,8 @@ export function getKnownChannels(
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
     builtins.push("KeyEvent", "KeyRegion");
   } else {
-    builtins.push("MicVolume");
+    // Continuous numeric channels: mic volume + webcam tracking.
+    builtins.push("MicVolume", ...WEBCAM_CHANNELS);
   }
 
   const userChannels = new Set<string>();

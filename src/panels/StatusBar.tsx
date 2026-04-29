@@ -9,9 +9,17 @@
 // leaf component; do NOT replicate this pattern in heavier panels.
 
 import { useEffect, useState } from "react";
-import { Keyboard, Mic, MicOff, Settings } from "lucide-react";
+import {
+  Camera,
+  CameraOff,
+  Keyboard,
+  Mic,
+  MicOff,
+  Settings,
+} from "lucide-react";
 import { getMicSource } from "../inputs/MicSource";
 import { getKeyboardSource } from "../inputs/KeyboardSource";
+import { getWebcamSource } from "../inputs/WebcamSource";
 import { useAvatar } from "../store/useAvatar";
 import { useInputValue } from "../hooks/useInputValue";
 import { ThresholdPopover } from "./ThresholdPopover";
@@ -28,10 +36,16 @@ export function StatusBar() {
   const [showMicPopover, setShowMicPopover] = useState(false);
   const [showKbPopover, setShowKbPopover] = useState(false);
 
-  // Eager-init both singletons so InputBus has values to read on first frame.
+  const [isCamRunning, setIsCamRunning] = useState(false);
+  const [isCamLoading, setIsCamLoading] = useState(false);
+  const [camError, setCamError] = useState<string | null>(null);
+
+  // Eager-init the always-on singletons so InputBus has values to read on
+  // first frame. Webcam is start-on-demand only.
   useState(() => {
     getMicSource(useAvatar.getState().getMicConfig());
     getKeyboardSource();
+    getWebcamSource();
     return null;
   });
 
@@ -41,6 +55,8 @@ export function StatusBar() {
   const holdProgress = useInputValue<number | null>("MicHoldProgress");
   const lastKey = useInputValue<string | null>("KeyEvent");
   const region = useInputValue<string | null>("KeyRegion");
+  const headYaw = useInputValue<number>("HeadYaw") ?? 0;
+  const mouthOpen = useInputValue<number>("MouthOpen") ?? 0;
 
   // Keep mic source config in sync with the avatar.
   useEffect(() => {
@@ -72,6 +88,31 @@ export function StatusBar() {
           : "Microphone unavailable or denied",
       );
       setIsMicRunning(false);
+    }
+  };
+
+  const handleCamToggle = async () => {
+    const cam = getWebcamSource();
+    if (isCamRunning) {
+      cam.stop();
+      setIsCamRunning(false);
+      return;
+    }
+    setIsCamLoading(true);
+    try {
+      await cam.start();
+      setIsCamRunning(true);
+      setCamError(null);
+    } catch (err) {
+      console.error("Webcam start failed:", err);
+      setCamError(
+        err instanceof Error
+          ? err.message
+          : "Webcam unavailable or denied",
+      );
+      setIsCamRunning(false);
+    } finally {
+      setIsCamLoading(false);
     }
   };
 
@@ -167,6 +208,38 @@ export function StatusBar() {
         {showMicPopover && (
           <ThresholdPopover onClose={() => setShowMicPopover(false)} />
         )}
+      </section>
+
+      {/* ============================ WEBCAM SECTION ============================ */}
+      <section className="status-section">
+        <button
+          className={`mic-toggle ${isCamRunning ? "live" : ""}`}
+          onClick={handleCamToggle}
+          disabled={isCamLoading}
+          title={
+            isCamRunning
+              ? "Stop webcam tracking"
+              : "Start webcam — feeds head pose, mouth, gaze, and blink to bindings"
+          }
+        >
+          {isCamRunning ? <Camera size={14} /> : <CameraOff size={14} />}
+          <span>
+            {isCamLoading ? "Loading…" : isCamRunning ? "Live" : "Off"}
+          </span>
+        </button>
+
+        <div className="status-values">
+          <span className="status-value">
+            <span className="status-label">Yaw</span>
+            <span className="status-num">{headYaw.toFixed(1)}°</span>
+          </span>
+          <span className="status-value">
+            <span className="status-label">Mouth</span>
+            <span className="status-num">{mouthOpen.toFixed(2)}</span>
+          </span>
+        </div>
+
+        {camError && <span className="status-error">{camError}</span>}
       </section>
 
       {/* ============================ KEYBOARD SECTION ============================ */}

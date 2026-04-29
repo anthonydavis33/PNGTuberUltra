@@ -261,7 +261,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 3e — sprite sheet animation</span>
+      <span className="status">Phase 4a — webcam tracking</span>
     </header>
   );
 }
