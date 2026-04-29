@@ -21,6 +21,11 @@ import {
 import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
 import { computeSpriteVisibility } from "../bindings/evaluate";
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
+import {
+  computeCurrentFrame,
+  sliceSheet,
+  sheetSliceSig,
+} from "./spriteSheet";
 import { useAvatar } from "../store/useAvatar";
 
 export class PixiApp {
@@ -37,6 +42,13 @@ export class PixiApp {
   /** Tracks which assetId each Pixi sprite is currently rendering, so we can
    *  detect mid-life asset swaps and re-texture instead of leaking placeholders. */
   private readonly spriteAssetMap = new Map<string, string | undefined>();
+  /** Per-sprite sprite-sheet state: cached frame textures + the slice
+   *  signature they were built for, so we can rebuild only when slicing
+   *  config (cols/rows/frameCount) actually changes. */
+  private readonly spriteSheetMap = new Map<
+    string,
+    { sig: string; frames: Texture[] }
+  >();
   private dragState: { id: string; lastX: number; lastY: number } | null = null;
   private destroyed = false;
   private placeholderTexture: Texture | null = null;
@@ -108,6 +120,10 @@ export class PixiApp {
       this.app.destroy(true, { children: true });
     }
     this.host = null;
+    for (const { frames } of this.spriteSheetMap.values()) {
+      for (const f of frames) f.destroy();
+    }
+    this.spriteSheetMap.clear();
     this.spriteMap.clear();
     this.spriteAssetMap.clear();
     this.placeholderTexture = null;
@@ -138,7 +154,10 @@ export class PixiApp {
       } else if (currentAsset !== ms.asset) {
         sprite.texture = this.resolveTexture(ms.asset, assets);
         this.spriteAssetMap.set(ms.id, ms.asset);
+        // Asset changed → existing slices are stale.
+        this.disposeSheet(ms.id);
       }
+      this.syncSheet(ms, assets);
       this.applyTransform(sprite, ms);
     }
     for (const [id, sprite] of this.spriteMap) {
@@ -146,6 +165,7 @@ export class PixiApp {
         sprite.destroy();
         this.spriteMap.delete(id);
         this.spriteAssetMap.delete(id);
+        this.disposeSheet(id);
       }
     }
 
@@ -199,6 +219,17 @@ export class PixiApp {
       if (!pixiSprite) continue;
 
       pixiSprite.visible = computeSpriteVisibility(ms);
+
+      // Sprite-sheet frame swap. Uses the global `now` clock so multiple
+      // sheet sprites at the same fps stay in lockstep.
+      if (ms.sheet) {
+        const sheetState = this.spriteSheetMap.get(ms.id);
+        if (sheetState && sheetState.frames.length > 0) {
+          const idx = computeCurrentFrame(ms.sheet, now);
+          const safeIdx = Math.min(idx, sheetState.frames.length - 1);
+          pixiSprite.texture = sheetState.frames[safeIdx];
+        }
+      }
 
       // Effective transform = base + bindings + modifiers (parent compose,
       // spring/drag smoothing, sine offset).
@@ -260,6 +291,43 @@ export class PixiApp {
     });
   }
 
+  /** Build / rebuild / dispose the per-sprite sheet textures based on the
+   *  current sprite-sheet config. Cheap when nothing changed (compares a
+   *  small slice signature). */
+  private syncSheet(
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): void {
+    if (!ms.sheet) {
+      // Sheet disabled — drop any cached frames and fall back to base texture.
+      if (this.spriteSheetMap.has(ms.id)) {
+        this.disposeSheet(ms.id);
+        const sprite = this.spriteMap.get(ms.id);
+        if (sprite) sprite.texture = this.resolveTexture(ms.asset, assets);
+      }
+      return;
+    }
+
+    const sig = sheetSliceSig(ms.sheet);
+    const existing = this.spriteSheetMap.get(ms.id);
+    if (existing && existing.sig === sig) return; // up to date
+
+    // Rebuild frames from the asset's base texture.
+    if (existing) {
+      for (const f of existing.frames) f.destroy();
+    }
+    const baseTexture = this.resolveTexture(ms.asset, assets);
+    const frames = sliceSheet(baseTexture, ms.sheet);
+    this.spriteSheetMap.set(ms.id, { sig, frames });
+  }
+
+  private disposeSheet(spriteId: string): void {
+    const existing = this.spriteSheetMap.get(spriteId);
+    if (!existing) return;
+    for (const f of existing.frames) f.destroy();
+    this.spriteSheetMap.delete(spriteId);
+  }
+
   private resolveTexture(
     assetId: string | undefined,
     assets: Record<string, AssetEntry>,
@@ -298,7 +366,12 @@ export class PixiApp {
     // pass through to whatever sprite is rendered below. Falls back to the
     // default rectangular hit area when no alpha map is available (the
     // placeholder rectangle, or assets where pixel data couldn't be read).
-    if (ms.asset) {
+    // For sprite-sheet sprites we skip the alpha test entirely — the
+    // current frame's region of the sheet's alpha map would need lookups
+    // to follow the active frame, which is more cost than per-pixel hits
+    // on animations are worth. Pixi's default rect hit area uses the
+    // current texture's frame, which already matches the visible cell.
+    if (ms.asset && !ms.sheet) {
       const asset = assets[ms.asset];
       if (asset?.alphaMap && asset.width > 0 && asset.height > 0) {
         const alphaMap = asset.alphaMap;

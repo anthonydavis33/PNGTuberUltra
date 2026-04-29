@@ -8,10 +8,13 @@ import { ModifierRow } from "../components/ModifierRow";
 import { ShowOnPopover } from "./ShowOnPopover";
 import { getKnownChannels } from "../bindings/channels";
 import {
+  DEFAULT_SPRITE_SHEET,
   DEFAULT_TRANSFORM,
   type Anchor,
   type Modifier,
   type ModifierType,
+  type SpriteSheet,
+  type SpriteSheetLoopMode,
   type Transform,
   type TransformBinding,
   type VisibilityBinding,
@@ -27,6 +30,7 @@ export function Properties() {
   );
   const updateSpriteTransform = useAvatar((s) => s.updateSpriteTransform);
   const updateSpriteAnchor = useAvatar((s) => s.updateSpriteAnchor);
+  const setSpriteSheet = useAvatar((s) => s.setSpriteSheet);
   const addBinding = useAvatar((s) => s.addBinding);
   const removeBinding = useAvatar((s) => s.removeBinding);
   const updateBinding = useAvatar((s) => s.updateBinding);
@@ -74,6 +78,11 @@ export function Properties() {
 
   const resetTransform = () => {
     updateSpriteTransform(sprite.id, DEFAULT_TRANSFORM);
+  };
+
+  const updateSheetField = (patch: Partial<SpriteSheet>): void => {
+    if (!sprite.sheet) return;
+    setSpriteSheet(sprite.id, { ...sprite.sheet, ...patch });
   };
 
   const addNewVisibilityBinding = (): void => {
@@ -204,6 +213,98 @@ export function Properties() {
         <RotateCcw size={14} />
         Reset Transform
       </button>
+
+      {/* ============= SPRITE SHEET ============= */}
+      <section className="properties-section">
+        <div className="properties-section-header">
+          <span>Sprite Sheet</span>
+          {sprite.sheet ? (
+            <button
+              onClick={() => setSpriteSheet(sprite.id, undefined)}
+              className="tool-btn"
+              title="Disable sheet animation — sprite renders the full image"
+            >
+              Disable
+            </button>
+          ) : (
+            <button
+              onClick={() => setSpriteSheet(sprite.id, DEFAULT_SPRITE_SHEET)}
+              className="tool-btn"
+              title="Slice this sprite's image into animation frames (advanced)"
+            >
+              <Plus size={12} />
+              Configure
+            </button>
+          )}
+        </div>
+
+        {sprite.sheet ? (
+          <div className="sprite-sheet-fields">
+            <div className="prop-pair">
+              <NumberField
+                label="Cols"
+                value={sprite.sheet.cols}
+                onChange={(v) =>
+                  updateSheetField({ cols: Math.max(1, Math.floor(v)) })
+                }
+                step={1}
+                precision={0}
+              />
+              <NumberField
+                label="Rows"
+                value={sprite.sheet.rows}
+                onChange={(v) =>
+                  updateSheetField({ rows: Math.max(1, Math.floor(v)) })
+                }
+                step={1}
+                precision={0}
+              />
+            </div>
+            <div className="prop-pair">
+              <NumberField
+                label="Frames"
+                value={sprite.sheet.frameCount}
+                onChange={(v) =>
+                  updateSheetField({
+                    frameCount: Math.max(1, Math.floor(v)),
+                  })
+                }
+                step={1}
+                precision={0}
+              />
+              <NumberField
+                label="FPS"
+                value={sprite.sheet.fps}
+                onChange={(v) => updateSheetField({ fps: Math.max(0, v) })}
+                step={1}
+                precision={1}
+              />
+            </div>
+            <label className="sprite-sheet-loop-label">
+              <span>Loop mode</span>
+              <select
+                className="sprite-sheet-loop"
+                value={sprite.sheet.loopMode}
+                onChange={(e) =>
+                  updateSheetField({
+                    loopMode: e.target.value as SpriteSheetLoopMode,
+                  })
+                }
+                title="loop: restart at end · pingpong: forward then reverse · once: stop on last frame"
+              >
+                <option value="loop">loop</option>
+                <option value="pingpong">pingpong</option>
+                <option value="once">once</option>
+              </select>
+            </label>
+          </div>
+        ) : (
+          <p className="empty">
+            Off — sprite renders the full image. Click <strong>Configure</strong>{" "}
+            to slice it into animation frames.
+          </p>
+        )}
+      </section>
 
       {/* ============= BINDINGS ============= */}
       <section className="properties-section">

@@ -201,14 +201,17 @@ JSON-first, no binary. Diffable in git, importable without our app.
 
 Each phase ends in something demoable internally before the next starts.
 
-1. **Skeleton** — Tauri + React + Vite scaffold, PixiJS canvas, layer tree renders one PNG sprite, transform controls work end-to-end.
-2. **Data model + simple inputs** — `model.json` parser, mic input + keyboard input + hotkey input wired to a generic input bus. Save/load round-trips a model.
-3. **Bindings + modifiers** — bindings drive sprite properties from inputs; all four modifiers implemented and stackable.
-4. **Webcam tracking** — MediaPipe FaceLandmarker integrated, parameters published to the input bus, basic head-tilt-driven sprite rotation works.
+1. ✅ **Skeleton** — Tauri + React + Vite scaffold, PixiJS canvas, layer tree renders one PNG sprite, transform controls work end-to-end.
+2. ✅ **Data model + simple inputs** — `model.json` parser, mic input + keyboard input + hotkey input wired to a generic input bus. Save/load round-trips a `.pnxr` model. *Shipped as 2a (PNG loading), 2b (mic + thresholds + phonemes), 2c (keyboard + regions + hotkeys), 2d (.pnxr persistence).*
+3. ✅ **Bindings + modifiers + sprite sheets** — bindings drive sprite properties from inputs; all four modifiers implemented and stackable; sprite-sheet animation. *Shipped as 3a (visibility bindings), 3b (transform bindings, linear), 3c (parent / spring / drag / sine modifiers + anchor controls), 3d (Show On checkbox UX, drag-drop, per-pixel hits, keyboard shortcuts), 3e (sprite-sheet animation with cols/rows/fps/loop modes).*
+4. **Webcam tracking + advanced sprite-sheet bindings** — combined phase, two related pieces:
+   - **MediaPipe FaceLandmarker integration**: face tracking publishes new continuous channels to the input bus — `HeadYaw` / `HeadPitch` / `HeadRoll`, `MouthOpen`, `BrowRaise`, `GazeX` / `GazeY`, `EyesClosed`. New status-bar section + calibration / enable controls. Transform bindings now drive avatar from real head movement.
+   - **Deferred 3f items rolled in here**: (a) `frame` as a `TransformTarget` so transform bindings can drive sprite-sheet frame index from any numeric channel — e.g. `MicVolume → frame` for proportional mouth-opening, or `MouthOpen → frame` once webcam ships. (b) `stateMap` mapping type alongside `linear` — a discrete-value lookup table so `MicPhoneme stateMap {A: 0, I: 1, U: 2, E: 3, O: 4} → frame` lets one sprite-sheet sprite express full phoneme lipsync with no state-machine plumbing. Auto-advance fps is the fallback when no `frame` binding fires; bound frame wins. UI extension: `TransformBindingRow` grows a key/value editor branch when target is `frame` or mapping kind is `stateMap`.
+   - Why bundled: webcam + frame-bindings together unlock the canonical "single sprite, sheet of mouths, vowel-driven lipsync" rig pattern in one phase. Independently they're each useful; together they replace what currently needs ~5 separate sprites with separate bindings.
 5. **Editor UX** — visual binding editor, region editor, hotkey assignment UI, undo/redo. This is the "rigging stops feeling bad" milestone.
-6. **Mouse + animations** — mouse input source, tween-on-event animation system, keyboard-region → animation flow. Bongo Cat-style demo works.
+6. **Mouse + animations** — mouse input source, tween-on-event animation system, keyboard-region → animation flow. Bongo Cat-style demo works. **Trigger-on-event sprite-sheet playback** (deferred 3g — "press T → play wave once, return to frame 0") lands here since it's the same state-machine concept as keyboard-region animations.
 7. **PNGTuber+ import** — parse `.png2` zip, map to our schema, the friend's existing avatar opens.
-8. **Streaming polish** — chroma key mode, OBS browser source URL, hotkeys-when-unfocused verified, tray pause toggle, privacy guardrails audited.
+8. **Streaming polish** — chroma key mode, OBS browser source URL, hotkeys-when-unfocused verified, tray pause toggle, privacy guardrails audited. **Pause-on-hide** sprite-sheet QoL lands here.
 9. **Friend ships** — actual user installs and uses it for a real stream.
 
 ## Out of scope (revisit for v2)

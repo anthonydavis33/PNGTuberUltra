@@ -14,6 +14,7 @@ import {
   Modifier,
   Sprite,
   SpriteId,
+  SpriteSheet,
   Transform,
 } from "../types/avatar";
 import { unloadAsset } from "../canvas/assetLoader";
@@ -35,6 +36,9 @@ interface AvatarStore {
   selectSprite: (id: SpriteId | null) => void;
   updateSpriteTransform: (id: SpriteId, patch: Partial<Transform>) => void;
   updateSpriteAnchor: (id: SpriteId, patch: Partial<Anchor>) => void;
+  /** Set or clear a sprite's sprite-sheet config. Pass undefined to disable
+   *  sheet animation; pass an object to enable / replace. */
+  setSpriteSheet: (id: SpriteId, sheet: SpriteSheet | undefined) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
   removeSprite: (id: SpriteId) => void;
   /** Reorder a sprite within the model array (which is render z-order:
@@ -127,6 +131,16 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         ...state.model,
         sprites: state.model.sprites.map((s) =>
           s.id === id ? { ...s, anchor: { ...s.anchor, ...patch } } : s,
+        ),
+      },
+    })),
+
+  setSpriteSheet: (id, sheet) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === id ? { ...s, sheet } : s,
         ),
       },
     })),

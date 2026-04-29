@@ -40,7 +40,42 @@ export interface Sprite {
   /** Modifiers post-process the binding-derived target values before render.
    *  Parent (transform inheritance) is always at index 0 if present. */
   modifiers: Modifier[];
+  /** When set, the sprite's texture is treated as a sprite sheet — only one
+   *  frame is rendered at a time, advancing automatically at fps according
+   *  to loopMode. Hit testing falls back to bounding-box for sheet sprites. */
+  sheet?: SpriteSheet;
 }
+
+// ---------------------------------------------------------------- Sprite Sheet
+
+export type SpriteSheetLoopMode = "loop" | "pingpong" | "once";
+
+/**
+ * Sprite-sheet / texture-atlas animation config.
+ *
+ * The asset's image is sliced into a `cols × rows` grid; the sprite shows
+ * one frame at a time, advancing at `fps` according to `loopMode`. Frame
+ * progression uses a global clock so multiple sprites with the same fps
+ * stay in sync (lockstep).
+ *
+ * `frameCount` may be less than `cols * rows` for partial last rows.
+ */
+export interface SpriteSheet {
+  cols: number;
+  rows: number;
+  frameCount: number;
+  /** Frames per second. 0 = no auto-advance (frame stays at 0). */
+  fps: number;
+  loopMode: SpriteSheetLoopMode;
+}
+
+export const DEFAULT_SPRITE_SHEET: SpriteSheet = {
+  cols: 1,
+  rows: 1,
+  frameCount: 1,
+  fps: 12,
+  loopMode: "loop",
+};
 
 // ---------------------------------------------------------------- Bindings
 
