@@ -19,7 +19,10 @@ import {
   type FederatedPointerEvent,
 } from "pixi.js";
 import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
-import { computeSpriteVisibility } from "../bindings/evaluate";
+import {
+  applyTransformBindings,
+  computeSpriteVisibility,
+} from "../bindings/evaluate";
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
 import {
   computeCurrentFrame,
@@ -220,13 +223,24 @@ export class PixiApp {
 
       pixiSprite.visible = computeSpriteVisibility(ms);
 
-      // Sprite-sheet frame swap. Uses the global `now` clock so multiple
-      // sheet sprites at the same fps stay in lockstep.
+      // Sprite-sheet frame swap. Priority:
+      //   1. A `frame` transform binding's output (lets channels drive
+      //      frame index — phoneme-to-frame lookups, volume-to-frame, etc.)
+      //   2. Otherwise auto-advance via fps + loopMode against the global
+      //      clock, so multiple sheet sprites at the same fps stay in lockstep.
       if (ms.sheet) {
         const sheetState = this.spriteSheetMap.get(ms.id);
         if (sheetState && sheetState.frames.length > 0) {
-          const idx = computeCurrentFrame(ms.sheet, now);
-          const safeIdx = Math.min(idx, sheetState.frames.length - 1);
+          const overrides = applyTransformBindings(ms);
+          const fromBinding = overrides.frame;
+          const idx =
+            fromBinding !== undefined
+              ? Math.floor(fromBinding)
+              : computeCurrentFrame(ms.sheet, now);
+          const safeIdx = Math.max(
+            0,
+            Math.min(idx, sheetState.frames.length - 1),
+          );
           pixiSprite.texture = sheetState.frames[safeIdx];
         }
       }

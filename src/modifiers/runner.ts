@@ -14,11 +14,11 @@
 import { applyTransformBindings } from "../bindings/evaluate";
 import {
   type DragModifier,
+  type ModifierTarget,
   type ParentModifier,
   type SineModifier,
   type Sprite,
   type SpringModifier,
-  type TransformTarget,
 } from "../types/avatar";
 
 export interface EffectiveTransform {
@@ -164,13 +164,13 @@ export class ModifierRunner {
     };
   }
 
-  private readProperty(t: EffectiveTransform, p: TransformTarget): number {
+  private readProperty(t: EffectiveTransform, p: ModifierTarget): number {
     return t[p];
   }
 
   private writeProperty(
     t: EffectiveTransform,
-    p: TransformTarget,
+    p: ModifierTarget,
     v: number,
   ): EffectiveTransform {
     return { ...t, [p]: v };

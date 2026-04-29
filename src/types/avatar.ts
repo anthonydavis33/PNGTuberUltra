@@ -100,9 +100,19 @@ export type TransformTarget =
   | "rotation"
   | "scaleX"
   | "scaleY"
-  | "alpha";
+  | "alpha"
+  | "frame";
 
 export type BindingTarget = "visible" | TransformTarget;
+
+/**
+ * Subset of TransformTarget that modifiers (Spring/Drag/Sine) can write to.
+ * Excludes `frame` — modifier semantics (smoothing, oscillation) don't make
+ * sense for a discrete frame index, and the runner's EffectiveTransform
+ * doesn't carry a frame field anyway. Frame is driven exclusively by
+ * transform bindings, evaluated separately in the PixiApp ticker.
+ */
+export type ModifierTarget = Exclude<TransformTarget, "frame">;
 
 /**
  * Linear input→output range mapping for transform bindings.
@@ -125,7 +135,22 @@ export interface BindingMappingLinear {
   additive?: boolean;
 }
 
-export type BindingMapping = BindingMappingLinear;
+/**
+ * Discrete-value lookup mapping. Channel value (stringified) is matched
+ * against `entries[i].key`; matching entry's `value` is the binding output.
+ * Channel values not in the map produce no override (the sprite uses its
+ * base transform / auto-advance).
+ *
+ * Canonical use: `MicPhoneme stateMap [{A:0},{I:1},{U:2},{E:3},{O:4}] →
+ * frame` — one sprite-sheet sprite expresses phoneme-driven lipsync with
+ * no state-machine plumbing.
+ */
+export interface BindingMappingStateMap {
+  type: "stateMap";
+  entries: Array<{ key: string; value: number }>;
+}
+
+export type BindingMapping = BindingMappingLinear | BindingMappingStateMap;
 
 /**
  * Visibility binding — boolean output ANDed across all visibility bindings
@@ -191,7 +216,7 @@ export interface ParentModifier {
 export interface SpringModifier {
   id: string;
   type: "spring";
-  property: TransformTarget;
+  property: ModifierTarget;
   stiffness: number;
   damping: number;
 }
@@ -204,7 +229,7 @@ export interface SpringModifier {
 export interface DragModifier {
   id: string;
   type: "drag";
-  property: TransformTarget;
+  property: ModifierTarget;
   rate: number;
 }
 
@@ -217,7 +242,7 @@ export interface DragModifier {
 export interface SineModifier {
   id: string;
   type: "sine";
-  property: TransformTarget;
+  property: ModifierTarget;
   amplitude: number;
   frequency: number;
   phase: number;

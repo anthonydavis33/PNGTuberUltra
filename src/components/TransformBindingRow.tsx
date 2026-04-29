@@ -1,23 +1,27 @@
 // Single row in the per-sprite Bindings list — transform variant.
 //
-// Three sub-rows because there are too many numbers to fit horizontally
-// in the 280px Properties panel:
-//   1. channel → target  (plus trash)
-//   2. in [min] – [max]
-//   3. out [min] – [max]
+// A transform binding maps a channel's value to a numeric sprite property.
+// Two mapping kinds:
+//   - linear:   continuous input range → continuous output range, with
+//               additive (offset from base) or absolute behavior.
+//   - stateMap: discrete channel value → looked-up numeric output. Use
+//               for things like "MicPhoneme A=0, I=1, U=2, E=3, O=4 → frame".
 //
-// Channel and target are <select>s (consistency with visibility rows).
-// Range numbers are plain <input type="number"> — NumberField's drag-scrub
-// label doesn't fit the inline layout. Possible polish later.
+// Channel and target are <select>s; numeric fields are NumberFields so
+// typing partial values like "-" or "" works while editing.
 
 import { useMemo } from "react";
-import { ArrowRight, Trash2 } from "lucide-react";
+import { ArrowRight, Plus, Trash2 } from "lucide-react";
 import { NumberField } from "./NumberField";
 import {
+  type AvatarModel,
+  type BindingMapping,
   type BindingMappingLinear,
+  type BindingMappingStateMap,
   type TransformBinding,
   type TransformTarget,
 } from "../types/avatar";
+import { getValuesForChannel } from "../bindings/channels";
 
 const TRANSFORM_TARGETS: { value: TransformTarget; label: string }[] = [
   { value: "x", label: "X" },
@@ -26,6 +30,7 @@ const TRANSFORM_TARGETS: { value: TransformTarget; label: string }[] = [
   { value: "scaleX", label: "Scale X" },
   { value: "scaleY", label: "Scale Y" },
   { value: "alpha", label: "Alpha" },
+  { value: "frame", label: "Frame" },
 ];
 
 interface TransformBindingRowProps {
@@ -33,6 +38,37 @@ interface TransformBindingRowProps {
   onChange: (patch: Partial<TransformBinding>) => void;
   onRemove: () => void;
   channels: string[];
+  /** Used to seed sensible defaults when switching mapping kind — e.g.
+   *  switching to stateMap pre-populates entries from the channel's known
+   *  discrete values. */
+  model: AvatarModel;
+}
+
+/** Default linear mapping for fresh bindings or when switching from stateMap. */
+function defaultLinearMapping(): BindingMappingLinear {
+  return {
+    type: "linear",
+    inMin: 0,
+    inMax: 1,
+    outMin: 0,
+    outMax: 1,
+    additive: true,
+  };
+}
+
+/** Default stateMap mapping when switching from linear. Pre-populates entries
+ *  from the channel's known discrete values if any (e.g. picking
+ *  MicPhoneme + State Map gives you A→0, I→1, U→2, E→3, O→4 instantly). */
+function defaultStateMapMapping(
+  channel: string,
+  model: AvatarModel,
+): BindingMappingStateMap {
+  const validValues = getValuesForChannel(channel, model);
+  const entries =
+    validValues && validValues.length > 0
+      ? validValues.map((v, i) => ({ key: v, value: i }))
+      : [{ key: "", value: 0 }];
+  return { type: "stateMap", entries };
 }
 
 export function TransformBindingRow({
@@ -40,6 +76,7 @@ export function TransformBindingRow({
   onChange,
   onRemove,
   channels,
+  model,
 }: TransformBindingRowProps) {
   const channelOptions = useMemo(() => {
     const arr = [...channels];
@@ -47,22 +84,43 @@ export function TransformBindingRow({
     return arr;
   }, [channels, binding.input]);
 
-  const updateMapping = (patch: Partial<BindingMappingLinear>): void => {
-    onChange({ mapping: { ...binding.mapping, ...patch } });
+  const updateMapping = (mapping: BindingMapping): void => {
+    onChange({ mapping });
   };
 
-  // Same local-string-state behavior as the property panel — lets you clear
-  // the field, type "-15" without it snapping back, etc.
+  const updateLinear = (patch: Partial<BindingMappingLinear>): void => {
+    if (binding.mapping.type !== "linear") return;
+    updateMapping({ ...binding.mapping, ...patch });
+  };
+
+  const updateStateMapEntries = (
+    entries: BindingMappingStateMap["entries"],
+  ): void => {
+    if (binding.mapping.type !== "stateMap") return;
+    updateMapping({ type: "stateMap", entries });
+  };
+
+  const switchToLinear = (): void => {
+    if (binding.mapping.type === "linear") return;
+    updateMapping(defaultLinearMapping());
+  };
+
+  const switchToStateMap = (): void => {
+    if (binding.mapping.type === "stateMap") return;
+    updateMapping(defaultStateMapMapping(binding.input, model));
+  };
+
   const numberInput = (
     value: number,
     onChangeNum: (v: number) => void,
+    precision = 2,
   ): React.ReactElement => (
     <NumberField
       label=""
       value={value}
       onChange={onChangeNum}
-      step={0.05}
-      precision={2}
+      step={precision === 0 ? 1 : 0.05}
+      precision={precision}
     />
   );
 
@@ -90,7 +148,7 @@ export function TransformBindingRow({
           onChange={(e) =>
             onChange({ target: e.target.value as TransformTarget })
           }
-          title="Sprite property to drive"
+          title="Sprite property to drive. `frame` only does anything for sprite-sheet sprites."
         >
           {TRANSFORM_TARGETS.map((t) => (
             <option key={t.value} value={t.value}>
@@ -108,35 +166,151 @@ export function TransformBindingRow({
         </button>
       </div>
 
-      <div className="mapping-row">
-        <span className="mapping-label">in</span>
-        {numberInput(binding.mapping.inMin, (v) => updateMapping({ inMin: v }))}
-        <span className="mapping-dash">–</span>
-        {numberInput(binding.mapping.inMax, (v) => updateMapping({ inMax: v }))}
+      <div className="mapping-kind-toggle">
+        <button
+          type="button"
+          className={binding.mapping.type === "linear" ? "active" : ""}
+          onClick={switchToLinear}
+          title="Range → range mapping. For continuous channels like MicVolume."
+        >
+          Linear
+        </button>
+        <button
+          type="button"
+          className={binding.mapping.type === "stateMap" ? "active" : ""}
+          onClick={switchToStateMap}
+          title="Discrete value → number lookup. For phoneme/state channels."
+        >
+          State Map
+        </button>
       </div>
 
-      <div className="mapping-row">
-        <span className="mapping-label">out</span>
-        {numberInput(binding.mapping.outMin, (v) =>
-          updateMapping({ outMin: v }),
-        )}
-        <span className="mapping-dash">–</span>
-        {numberInput(binding.mapping.outMax, (v) =>
-          updateMapping({ outMax: v }),
-        )}
-      </div>
-
-      <label
-        className="transform-binding-additive"
-        title="When checked, the output is added to the sprite's base value (gaze offsets the sprite around its base position). When unchecked, output replaces the base."
-      >
-        <input
-          type="checkbox"
-          checked={binding.mapping.additive ?? true}
-          onChange={(e) => updateMapping({ additive: e.target.checked })}
+      {binding.mapping.type === "linear" ? (
+        <>
+          <div className="mapping-row">
+            <span className="mapping-label">in</span>
+            {numberInput(binding.mapping.inMin, (v) =>
+              updateLinear({ inMin: v }),
+            )}
+            <span className="mapping-dash">–</span>
+            {numberInput(binding.mapping.inMax, (v) =>
+              updateLinear({ inMax: v }),
+            )}
+          </div>
+          <div className="mapping-row">
+            <span className="mapping-label">out</span>
+            {numberInput(binding.mapping.outMin, (v) =>
+              updateLinear({ outMin: v }),
+            )}
+            <span className="mapping-dash">–</span>
+            {numberInput(binding.mapping.outMax, (v) =>
+              updateLinear({ outMax: v }),
+            )}
+          </div>
+          <label
+            className="transform-binding-additive"
+            title="When checked, the output is added to the sprite's base value (gaze offsets the sprite around its base position). When unchecked, output replaces the base."
+          >
+            <input
+              type="checkbox"
+              checked={binding.mapping.additive ?? true}
+              onChange={(e) => updateLinear({ additive: e.target.checked })}
+            />
+            <span>Additive (offset from base)</span>
+          </label>
+        </>
+      ) : (
+        <StateMapEditor
+          mapping={binding.mapping}
+          onChange={updateStateMapEntries}
+          numberInput={numberInput}
         />
-        <span>Additive (offset from base)</span>
-      </label>
+      )}
     </li>
+  );
+}
+
+interface StateMapEditorProps {
+  mapping: BindingMappingStateMap;
+  onChange: (entries: BindingMappingStateMap["entries"]) => void;
+  numberInput: (
+    value: number,
+    onChangeNum: (v: number) => void,
+    precision?: number,
+  ) => React.ReactElement;
+}
+
+function StateMapEditor({
+  mapping,
+  onChange,
+  numberInput,
+}: StateMapEditorProps) {
+  const updateEntry = (
+    idx: number,
+    patch: Partial<{ key: string; value: number }>,
+  ): void => {
+    onChange(
+      mapping.entries.map((e, i) => (i === idx ? { ...e, ...patch } : e)),
+    );
+  };
+
+  const removeEntry = (idx: number): void => {
+    onChange(mapping.entries.filter((_, i) => i !== idx));
+  };
+
+  const addEntry = (): void => {
+    onChange([
+      ...mapping.entries,
+      { key: "", value: mapping.entries.length },
+    ]);
+  };
+
+  return (
+    <div className="state-map-editor">
+      {mapping.entries.length === 0 ? (
+        <p className="state-map-empty">
+          No entries — add a row below to map channel values to numbers.
+        </p>
+      ) : (
+        <ul className="state-map-rows">
+          {mapping.entries.map((entry, i) => (
+            <li key={i} className="state-map-row">
+              <input
+                type="text"
+                value={entry.key}
+                onChange={(e) => updateEntry(i, { key: e.target.value })}
+                placeholder="value"
+                className="state-map-key"
+              />
+              <span className="state-map-arrow" aria-hidden="true">
+                →
+              </span>
+              {numberInput(
+                entry.value,
+                (v) => updateEntry(i, { value: v }),
+                0,
+              )}
+              <button
+                onClick={() => removeEntry(i)}
+                className="state-map-delete"
+                title="Remove entry"
+                aria-label="Remove entry"
+              >
+                <Trash2 size={11} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        type="button"
+        onClick={addEntry}
+        className="tool-btn state-map-add"
+        title="Add a channel-value to number-output entry"
+      >
+        <Plus size={11} />
+        Row
+      </button>
+    </div>
   );
 }

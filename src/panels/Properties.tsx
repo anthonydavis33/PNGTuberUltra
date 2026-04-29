@@ -371,6 +371,7 @@ export function Properties() {
                   key={b.id}
                   binding={b}
                   channels={transformChannels}
+                  model={model}
                   onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
                   onRemove={() => removeBinding(sprite.id, b.id)}
                 />

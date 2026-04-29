@@ -107,9 +107,19 @@ export function evaluateLinearMapping(
   return Math.max(lo, Math.min(hi, out));
 }
 
-/** Returns null when the channel value can't be coerced to a number. */
+/** Returns null when the channel value can't produce a numeric output for
+ *  this mapping (linear: not coercible to a number; stateMap: key not in
+ *  the lookup table). */
 export function evaluateTransformBinding(b: TransformBinding): number | null {
   const channelValue = inputBus.get(b.input);
+
+  if (b.mapping.type === "stateMap") {
+    const key = valueAsString(channelValue);
+    const entry = b.mapping.entries.find((e) => e.key === key);
+    return entry !== undefined ? entry.value : null;
+  }
+
+  // Linear
   const num = valueAsNumber(channelValue);
   if (num === null) return null;
   return evaluateLinearMapping(num, b.mapping);
@@ -137,6 +147,9 @@ function baseTransformValue(
     case "scaleY":
       return sprite.transform.scaleY;
     case "alpha":
+    case "frame":
+      // No meaningful base — additive degenerates to absolute, which is
+      // what users want for "the binding directly sets this property."
       return 0;
   }
 }
@@ -166,6 +179,8 @@ export function applyTransformBindings(
     const value = evaluateTransformBinding(b);
     if (value === null) continue;
 
+    // Only linear mappings are additive — stateMap is always absolute
+    // (lookup outputs are intended values, not offsets).
     const isAdditive =
       b.mapping.type === "linear" && (b.mapping.additive ?? true);
     overrides[b.target] = isAdditive

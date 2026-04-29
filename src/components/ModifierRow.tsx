@@ -6,12 +6,12 @@ import { Trash2 } from "lucide-react";
 import { NumberField } from "./NumberField";
 import {
   type Modifier,
+  type ModifierTarget,
   type Sprite,
   type SpriteId,
-  type TransformTarget,
 } from "../types/avatar";
 
-const TRANSFORM_TARGETS: { value: TransformTarget; label: string }[] = [
+const TRANSFORM_TARGETS: { value: ModifierTarget; label: string }[] = [
   { value: "x", label: "X" },
   { value: "y", label: "Y" },
   { value: "rotation", label: "Rotation" },
@@ -86,7 +86,7 @@ export function ModifierRow({
       className="modifier-property-picker"
       value={modifier.property}
       onChange={(e) =>
-        onChange({ property: e.target.value as TransformTarget })
+        onChange({ property: e.target.value as ModifierTarget })
       }
       title="Sprite property this modifier writes to"
     >

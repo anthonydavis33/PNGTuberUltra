@@ -49,10 +49,12 @@ function isPhonemeChannelReachable(model: AvatarModel): boolean {
  * - `visibility` (default): discrete-value channels.
  *   MicState, MicPhoneme (if reachable), KeyEvent, KeyRegion, plus every
  *   user-defined hotkey channel.
- * - `transform`: numeric channels.
- *   MicVolume, plus user-defined hotkey channels (toggle channels coerce
- *   to 0/1 cleanly; set channels are usually discrete strings, less useful,
- *   but listed for completeness).
+ * - `transform`: every channel. Linear mappings need numeric input
+ *   (continuous channels like MicVolume / webcam tracking work cleanly;
+ *   booleans coerce to 0/1, non-numeric strings skip). StateMap mappings
+ *   look up the stringified channel value in the entry table, so discrete
+ *   channels (MicPhoneme, MicState, KeyEvent, KeyRegion) are first-class
+ *   here too — `MicPhoneme → frame` is the canonical sprite-sheet rig.
  */
 export function getKnownChannels(
   model: AvatarModel,
@@ -64,8 +66,13 @@ export function getKnownChannels(
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
     builtins.push("KeyEvent", "KeyRegion");
   } else {
-    // Continuous numeric channels: mic volume + webcam tracking.
+    // Continuous numeric channels (suit linear mappings).
     builtins.push("MicVolume", ...WEBCAM_CHANNELS);
+    // Discrete channels (suit stateMap mappings — phoneme/state/region/key
+    // → number lookups).
+    builtins.push("MicState");
+    if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
+    builtins.push("KeyEvent", "KeyRegion");
   }
 
   const userChannels = new Set<string>();

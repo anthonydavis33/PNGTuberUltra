@@ -261,7 +261,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 4b — calibration + smoothing</span>
+      <span className="status">Phase 4c — frame target + state map</span>
     </header>
   );
 }
