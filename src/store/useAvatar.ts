@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  Anchor,
   AssetEntry,
   AssetId,
   AvatarModel,
@@ -10,6 +11,7 @@ import {
   DEFAULT_TRANSFORM,
   KeyboardConfig,
   MicConfig,
+  Modifier,
   Sprite,
   SpriteId,
   Transform,
@@ -32,6 +34,7 @@ interface AvatarStore {
   // Actions
   selectSprite: (id: SpriteId | null) => void;
   updateSpriteTransform: (id: SpriteId, patch: Partial<Transform>) => void;
+  updateSpriteAnchor: (id: SpriteId, patch: Partial<Anchor>) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
   removeSprite: (id: SpriteId) => void;
   /** Reorder a sprite within the model array (which is render z-order:
@@ -55,6 +58,16 @@ interface AvatarStore {
     spriteId: SpriteId,
     bindingId: string,
     patch: Partial<Binding>,
+  ) => void;
+
+  // Modifiers (per-sprite). Parent modifier always at index 0; adding a
+  // Parent replaces any existing Parent. Other modifiers append.
+  addModifier: (spriteId: SpriteId, modifier: Modifier) => void;
+  removeModifier: (spriteId: SpriteId, modifierId: string) => void;
+  updateModifier: (
+    spriteId: SpriteId,
+    modifierId: string,
+    patch: Partial<Modifier>,
   ) => void;
 
   // File I/O
@@ -104,6 +117,16 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         ...state.model,
         sprites: state.model.sprites.map((s) =>
           s.id === id ? { ...s, transform: { ...s.transform, ...patch } } : s,
+        ),
+      },
+    })),
+
+  updateSpriteAnchor: (id, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === id ? { ...s, anchor: { ...s.anchor, ...patch } } : s,
         ),
       },
     })),
@@ -260,6 +283,56 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
                 ...s,
                 bindings: s.bindings.map((b) =>
                   b.id === bindingId ? ({ ...b, ...patch } as Binding) : b,
+                ),
+              }
+            : s,
+        ),
+      },
+    })),
+
+  addModifier: (spriteId, modifier) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== spriteId) return s;
+          // Parent must be at index 0. Adding a Parent replaces any existing
+          // Parent. Other modifiers append at the end.
+          if (modifier.type === "parent") {
+            const withoutParent = s.modifiers.filter(
+              (m) => m.type !== "parent",
+            );
+            return { ...s, modifiers: [modifier, ...withoutParent] };
+          }
+          return { ...s, modifiers: [...s.modifiers, modifier] };
+        }),
+      },
+    })),
+
+  removeModifier: (spriteId, modifierId) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? { ...s, modifiers: s.modifiers.filter((m) => m.id !== modifierId) }
+            : s,
+        ),
+      },
+    })),
+
+  updateModifier: (spriteId, modifierId, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? {
+                ...s,
+                modifiers: s.modifiers.map((m) =>
+                  m.id === modifierId
+                    ? ({ ...m, ...patch } as Modifier)
+                    : m,
                 ),
               }
             : s,

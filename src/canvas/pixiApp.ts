@@ -19,16 +19,20 @@ import {
   type FederatedPointerEvent,
 } from "pixi.js";
 import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
-import {
-  applyTransformBindings,
-  computeSpriteVisibility,
-} from "../bindings/evaluate";
+import { computeSpriteVisibility } from "../bindings/evaluate";
+import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
 import { useAvatar } from "../store/useAvatar";
 
 export class PixiApp {
   readonly app: Application = new Application();
   /** All model sprites are children of this. Repositioned to canvas center on resize. */
   private readonly world: Container = new Container();
+  /** Editor-only overlay container — sibling of world, also centered. Holds
+   *  the anchor crosshair and any future canvas affordances (selection
+   *  outline, transform handles, etc.). Set eventMode="none" so it doesn't
+   *  block interaction with sprites underneath. */
+  private readonly overlays: Container = new Container();
+  private anchorDot: Graphics | null = null;
   private readonly spriteMap = new Map<string, PixiSprite>();
   /** Tracks which assetId each Pixi sprite is currently rendering, so we can
    *  detect mid-life asset swaps and re-texture instead of leaking placeholders. */
@@ -39,6 +43,9 @@ export class PixiApp {
   private windowPointerUpHandler: ((e: PointerEvent) => void) | null = null;
   private host: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private readonly modifierRunner = new ModifierRunner();
+  /** Wallclock time of the previous tick (in seconds), for dt computation. */
+  private lastTickTime: number | null = null;
 
   /** Wired by the React mount component. */
   onSelect?: (id: string | null) => void;
@@ -62,6 +69,11 @@ export class PixiApp {
     host.appendChild(this.app.canvas);
 
     this.app.stage.addChild(this.world);
+    this.app.stage.addChild(this.overlays);
+    this.overlays.eventMode = "none";
+    this.anchorDot = createAnchorDot();
+    this.anchorDot.visible = false;
+    this.overlays.addChild(this.anchorDot);
     this.recenterWorld();
 
     // Pixi v8's renderer doesn't reliably emit a 'resize' event we can hook,
@@ -107,6 +119,9 @@ export class PixiApp {
     assets: Record<string, AssetEntry>,
   ): void {
     if (this.destroyed || !this.app.stage) return;
+
+    // Drop modifier state for any modifier no longer in the model.
+    this.modifierRunner.pruneStaleState(modelSprites);
 
     const seen = new Set<string>();
     for (const ms of modelSprites) {
@@ -155,30 +170,58 @@ export class PixiApp {
     if (!this.host) return;
     this.world.x = this.host.clientWidth / 2;
     this.world.y = this.host.clientHeight / 2;
+    // Overlays must track world's centering so overlay coords match sprite
+    // world coords 1:1.
+    this.overlays.x = this.world.x;
+    this.overlays.y = this.world.y;
   };
 
   private tickBindings = (): void => {
     if (this.destroyed) return;
-    const sprites = useAvatar.getState().model.sprites;
+
+    const now = performance.now() / 1000;
+    const dt =
+      this.lastTickTime === null
+        ? 1 / 60
+        : Math.min(0.1, Math.max(0, now - this.lastTickTime));
+    this.lastTickTime = now;
+
+    const state = useAvatar.getState();
+    const sprites = state.model.sprites;
+    const selectedId = state.selectedId;
+    this.modifierRunner.beginFrame();
+
+    let selectedTransform: EffectiveTransform | null = null;
+
     for (const ms of sprites) {
       const pixiSprite = this.spriteMap.get(ms.id);
       if (!pixiSprite) continue;
 
       pixiSprite.visible = computeSpriteVisibility(ms);
 
-      // Transform overrides — base transform with binding outputs replacing
-      // any property that has a transform binding writing to it.
-      const overrides = applyTransformBindings(ms);
-      pixiSprite.x = overrides.x ?? ms.transform.x;
-      pixiSprite.y = overrides.y ?? ms.transform.y;
-      pixiSprite.rotation =
-        ((overrides.rotation ?? ms.transform.rotation) * Math.PI) / 180;
-      pixiSprite.scale.set(
-        overrides.scaleX ?? ms.transform.scaleX,
-        overrides.scaleY ?? ms.transform.scaleY,
-      );
-      // alpha isn't part of the base Transform — defaults to 1 unbound.
-      pixiSprite.alpha = overrides.alpha ?? 1;
+      // Effective transform = base + bindings + modifiers (parent compose,
+      // spring/drag smoothing, sine offset).
+      const t = this.modifierRunner.evaluate(ms, sprites, dt, now);
+      pixiSprite.x = t.x;
+      pixiSprite.y = t.y;
+      pixiSprite.rotation = (t.rotation * Math.PI) / 180;
+      pixiSprite.scale.set(t.scaleX, t.scaleY);
+      pixiSprite.alpha = t.alpha;
+
+      if (ms.id === selectedId) selectedTransform = t;
+    }
+
+    // Anchor crosshair tracks the selected sprite's effective pivot. The
+    // crosshair lives in `overlays`, which is centered just like `world`,
+    // so we use the same coordinate values.
+    if (this.anchorDot) {
+      if (selectedTransform) {
+        this.anchorDot.x = selectedTransform.x;
+        this.anchorDot.y = selectedTransform.y;
+        this.anchorDot.visible = true;
+      } else {
+        this.anchorDot.visible = false;
+      }
     }
   };
 
@@ -261,6 +304,10 @@ export class PixiApp {
   }
 
   private applyTransform(sprite: PixiSprite, ms: ModelSprite): void {
+    // Note: the per-frame ticker (tickBindings) overrides x/y/rotation/
+    // scale/alpha every frame from the modifier runner. This method only
+    // matters for first-render correctness before the next ticker fires
+    // and for setting anchor (which the ticker doesn't touch).
     // Sprite is a child of `world`, which is centered on the canvas.
     // So model x/y are already in centered world coords — no offset needed.
     sprite.x = ms.transform.x;
@@ -270,4 +317,25 @@ export class PixiApp {
     sprite.visible = ms.visible;
     sprite.anchor.set(ms.anchor.x, ms.anchor.y);
   }
+}
+
+/** Small accent-colored crosshair + filled dot used to mark the selected
+ *  sprite's pivot point on the canvas. */
+function createAnchorDot(): Graphics {
+  const ACCENT = 0xff7755;
+  return (
+    new Graphics()
+      // Horizontal arm
+      .moveTo(-10, 0)
+      .lineTo(10, 0)
+      .stroke({ width: 1.5, color: ACCENT, alpha: 0.85 })
+      // Vertical arm
+      .moveTo(0, -10)
+      .lineTo(0, 10)
+      .stroke({ width: 1.5, color: ACCENT, alpha: 0.85 })
+      // Center dot
+      .circle(0, 0, 4)
+      .fill(ACCENT)
+      .stroke({ width: 1, color: 0xffffff })
+  );
 }

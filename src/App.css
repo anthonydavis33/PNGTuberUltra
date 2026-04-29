@@ -245,6 +245,21 @@ body,
   gap: 10px;
 }
 
+.prop-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.prop-pair > .number-field {
+  min-width: 0;
+}
+
+.prop-pair > .number-field input {
+  min-width: 0;
+}
+
 .number-field {
   display: flex;
   flex-direction: column;
@@ -517,6 +532,7 @@ body,
 .properties-section-actions {
   display: flex;
   gap: 4px;
+  align-items: center;
 }
 
 .properties-section-actions .tool-btn {
@@ -524,6 +540,162 @@ body,
   letter-spacing: normal;
   font-size: 11px;
   padding: 3px 6px;
+}
+
+/* Modifier rows ------------------------------------------------------ */
+.modifier-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.modifier-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  cursor: default;
+}
+
+.modifier-row:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.modifier-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 24px;
+  gap: 6px;
+  align-items: center;
+}
+
+.modifier-type-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+}
+
+.modifier-type-badge.modifier-type-parent {
+  background: rgba(110, 180, 255, 0.18);
+  color: #88bfff;
+}
+
+.modifier-type-badge.modifier-type-spring {
+  background: rgba(255, 119, 85, 0.18);
+  color: var(--accent);
+}
+
+.modifier-type-badge.modifier-type-drag {
+  background: rgba(180, 180, 180, 0.15);
+  color: var(--text);
+}
+
+.modifier-type-badge.modifier-type-sine {
+  background: rgba(160, 220, 130, 0.18);
+  color: #b6e08a;
+}
+
+.modifier-row select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.modifier-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.modifier-property-picker,
+.modifier-parent-picker {
+  font-family: ui-monospace, monospace;
+}
+
+.modifier-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.modifier-delete:hover {
+  color: #fff;
+  background: var(--danger);
+}
+
+.modifier-params {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 4px;
+  align-items: center;
+  font-size: 10px;
+}
+
+.modifier-params-1 {
+  grid-template-columns: auto 1fr;
+}
+
+.modifier-params-3 {
+  grid-template-columns: auto 1fr auto 1fr auto 1fr;
+}
+
+.modifier-param-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-size: 9px;
+  text-align: right;
+}
+
+.modifier-row .number-field {
+  flex-direction: row;
+  gap: 0;
+}
+
+.modifier-row .number-field-label:empty {
+  display: none;
+}
+
+.modifier-row .number-field input {
+  width: 100%;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+
+.modifier-type-picker {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.modifier-type-picker:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* Status bar (bottom strip) ------------------------------------------ */

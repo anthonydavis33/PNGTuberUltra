@@ -34,11 +34,12 @@ export interface Sprite {
   /** Base visibility set by the user. Bindings AND with this — a sprite hidden
    *  in the model never becomes visible via bindings. */
   visible: boolean;
-  /** Bindings consume bus channels and drive sprite properties. Phase 3a:
-   *  visibility only. Phase 3b will widen Binding to include transform targets. */
+  /** Bindings consume bus channels and drive sprite properties (visibility +
+   *  transform values). */
   bindings: Binding[];
-  /** Forward-compat: empty until phase 3c. */
-  modifiers: unknown[];
+  /** Modifiers post-process the binding-derived target values before render.
+   *  Parent (transform inheritance) is always at index 0 if present. */
+  modifiers: Modifier[];
 }
 
 // ---------------------------------------------------------------- Bindings
@@ -115,6 +116,77 @@ export type Binding = VisibilityBinding | TransformBinding;
 
 /** Discrimination kind for picking channel lists / row UIs. */
 export type BindingKind = "visibility" | "transform";
+
+// ---------------------------------------------------------------- Modifiers
+
+/**
+ * Modifiers post-process a sprite's target transform before render.
+ * Pipeline: bindings → base transform → modifiers (in order) → final.
+ *
+ * Parent must be at index 0 if present — it composes the sprite's local
+ * transform with its parent sprite's world transform, producing world-space
+ * values that subsequent modifiers (Spring/Drag/Sine) operate on.
+ */
+export type ModifierType = "parent" | "spring" | "drag" | "sine";
+
+/**
+ * Transform inheritance. Child's local transform is composed with parent's
+ * world transform — head moves, hair follows. Does NOT change render z-order
+ * (sprites stay flat children of the world container; layer tree controls z).
+ */
+export interface ParentModifier {
+  id: string;
+  type: "parent";
+  /** Empty string = no parent assigned yet. */
+  parentSpriteId: SpriteId | "";
+}
+
+/**
+ * Hookean spring chases the target value with overshoot/damping.
+ * Bounce/jiggle for hair, ears, tails, jewelry.
+ *   stiffness 0..1 — higher = snappier
+ *   damping   0..1 — higher = less overshoot
+ */
+export interface SpringModifier {
+  id: string;
+  type: "spring";
+  property: TransformTarget;
+  stiffness: number;
+  damping: number;
+}
+
+/**
+ * First-order lag toward target with no overshoot.
+ * Capes, scarves.
+ *   rate — 1/timeConstant. Higher = faster catch-up. ~5 ≈ "1 second catch-up".
+ */
+export interface DragModifier {
+  id: string;
+  type: "drag";
+  property: TransformTarget;
+  rate: number;
+}
+
+/**
+ * Additive sinusoidal offset. Idle bob, breathing.
+ *   amplitude — in the property's units (px, deg, scale factor)
+ *   frequency — Hz (cycles per second)
+ *   phase     — radians; vary between sprites for desync
+ */
+export interface SineModifier {
+  id: string;
+  type: "sine";
+  property: TransformTarget;
+  amplitude: number;
+  frequency: number;
+  phase: number;
+}
+
+export type Modifier =
+  | ParentModifier
+  | SpringModifier
+  | DragModifier
+  | SineModifier;
 
 export interface AvatarModel {
   schema: 1;

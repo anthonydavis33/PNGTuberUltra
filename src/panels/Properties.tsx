@@ -1,12 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Plus, RotateCcw } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import { NumberField } from "../components/NumberField";
 import { BindingRow } from "../components/BindingRow";
 import { TransformBindingRow } from "../components/TransformBindingRow";
+import { ModifierRow } from "../components/ModifierRow";
 import { getKnownChannels } from "../bindings/channels";
 import {
   DEFAULT_TRANSFORM,
+  type Anchor,
+  type Modifier,
+  type ModifierType,
   type Transform,
   type TransformBinding,
   type VisibilityBinding,
@@ -21,10 +25,16 @@ export function Properties() {
     s.model.sprites.find((sp) => sp.id === selectedId),
   );
   const updateSpriteTransform = useAvatar((s) => s.updateSpriteTransform);
+  const updateSpriteAnchor = useAvatar((s) => s.updateSpriteAnchor);
   const addBinding = useAvatar((s) => s.addBinding);
   const removeBinding = useAvatar((s) => s.removeBinding);
   const updateBinding = useAvatar((s) => s.updateBinding);
+  const addModifier = useAvatar((s) => s.addModifier);
+  const removeModifier = useAvatar((s) => s.removeModifier);
+  const updateModifier = useAvatar((s) => s.updateModifier);
   const model = useAvatar((s) => s.model);
+  const [pendingModifierType, setPendingModifierType] =
+    useState<ModifierType>("spring");
 
   const visibilityChannels = useMemo(
     () => getKnownChannels(model, "visibility"),
@@ -49,6 +59,11 @@ export function Properties() {
     (key: keyof Transform) =>
     (v: number): void => {
       updateSpriteTransform(sprite.id, { [key]: v });
+    };
+  const setAnchor =
+    (key: keyof Anchor) =>
+    (v: number): void => {
+      updateSpriteAnchor(sprite.id, { [key]: v });
     };
 
   const resetTransform = () => {
@@ -81,25 +96,60 @@ export function Properties() {
     addBinding(sprite.id, binding);
   };
 
+  const addNewModifier = (): void => {
+    const id = `m-${crypto.randomUUID().slice(0, 8)}`;
+    let mod: Modifier;
+    switch (pendingModifierType) {
+      case "parent":
+        mod = { id, type: "parent", parentSpriteId: "" };
+        break;
+      case "spring":
+        mod = {
+          id,
+          type: "spring",
+          property: "rotation",
+          stiffness: 0.3,
+          damping: 0.7,
+        };
+        break;
+      case "drag":
+        mod = { id, type: "drag", property: "x", rate: 5 };
+        break;
+      case "sine":
+        mod = {
+          id,
+          type: "sine",
+          property: "y",
+          amplitude: 2,
+          frequency: 0.5,
+          phase: 0,
+        };
+        break;
+    }
+    addModifier(sprite.id, mod);
+  };
+
   return (
     <aside className="panel properties">
       <h2>Properties</h2>
       <h3>{sprite.name}</h3>
       <div className="prop-grid">
-        <NumberField
-          label="X"
-          value={t.x}
-          onChange={setTransform("x")}
-          step={1}
-          precision={0}
-        />
-        <NumberField
-          label="Y"
-          value={t.y}
-          onChange={setTransform("y")}
-          step={1}
-          precision={0}
-        />
+        <div className="prop-pair">
+          <NumberField
+            label="X"
+            value={t.x}
+            onChange={setTransform("x")}
+            step={1}
+            precision={0}
+          />
+          <NumberField
+            label="Y"
+            value={t.y}
+            onChange={setTransform("y")}
+            step={1}
+            precision={0}
+          />
+        </div>
         <NumberField
           label="Rotation"
           value={t.rotation}
@@ -107,20 +157,38 @@ export function Properties() {
           step={0.5}
           precision={1}
         />
-        <NumberField
-          label="Scale X"
-          value={t.scaleX}
-          onChange={setTransform("scaleX")}
-          step={0.01}
-          precision={2}
-        />
-        <NumberField
-          label="Scale Y"
-          value={t.scaleY}
-          onChange={setTransform("scaleY")}
-          step={0.01}
-          precision={2}
-        />
+        <div className="prop-pair">
+          <NumberField
+            label="Scale X"
+            value={t.scaleX}
+            onChange={setTransform("scaleX")}
+            step={0.01}
+            precision={2}
+          />
+          <NumberField
+            label="Scale Y"
+            value={t.scaleY}
+            onChange={setTransform("scaleY")}
+            step={0.01}
+            precision={2}
+          />
+        </div>
+        <div className="prop-pair">
+          <NumberField
+            label="Anchor X"
+            value={sprite.anchor.x}
+            onChange={setAnchor("x")}
+            step={0.05}
+            precision={2}
+          />
+          <NumberField
+            label="Anchor Y"
+            value={sprite.anchor.y}
+            onChange={setAnchor("y")}
+            step={0.05}
+            precision={2}
+          />
+        </div>
       </div>
       <button
         className="tool-btn reset-transform"
@@ -181,6 +249,53 @@ export function Properties() {
                 />
               ),
             )}
+          </ul>
+        )}
+      </section>
+
+      {/* ============= MODIFIERS ============= */}
+      <section className="properties-section">
+        <div className="properties-section-header">
+          <span>Modifiers</span>
+          <div className="properties-section-actions">
+            <select
+              className="modifier-type-picker"
+              value={pendingModifierType}
+              onChange={(e) =>
+                setPendingModifierType(e.target.value as ModifierType)
+              }
+              title="Pick modifier type"
+            >
+              <option value="parent">Parent</option>
+              <option value="spring">Spring</option>
+              <option value="drag">Drag</option>
+              <option value="sine">Sine</option>
+            </select>
+            <button
+              onClick={addNewModifier}
+              className="tool-btn"
+              title="Add the selected modifier"
+            >
+              <Plus size={12} />
+              Add
+            </button>
+          </div>
+        </div>
+
+        {sprite.modifiers.length === 0 ? (
+          <p className="empty">No modifiers — base + bindings only.</p>
+        ) : (
+          <ul className="modifier-list">
+            {sprite.modifiers.map((m) => (
+              <ModifierRow
+                key={m.id}
+                modifier={m}
+                onChange={(patch) => updateModifier(sprite.id, m.id, patch)}
+                onRemove={() => removeModifier(sprite.id, m.id)}
+                parentChoices={model.sprites}
+                currentSpriteId={sprite.id}
+              />
+            ))}
           </ul>
         )}
       </section>
