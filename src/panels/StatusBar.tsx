@@ -21,6 +21,7 @@ import { getMicSource } from "../inputs/MicSource";
 import { getKeyboardSource } from "../inputs/KeyboardSource";
 import { getWebcamSource } from "../inputs/WebcamSource";
 import { getLipsyncSource } from "../inputs/LipsyncSource";
+import { getMouseSource } from "../inputs/MouseSource";
 import { useAvatar } from "../store/useAvatar";
 import { useInputValue } from "../hooks/useInputValue";
 import { ThresholdPopover } from "./ThresholdPopover";
@@ -51,6 +52,7 @@ export function StatusBar() {
   useState(() => {
     getMicSource(useAvatar.getState().getMicConfig());
     getKeyboardSource();
+    getMouseSource();
     getWebcamSource();
     getLipsyncSource();
     return null;

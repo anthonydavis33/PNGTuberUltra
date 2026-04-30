@@ -25,6 +25,18 @@ import {
 } from "../types/avatar";
 import { WEBCAM_CHANNELS } from "../inputs/WebcamSource";
 
+/** Mouse channels that publish numbers (MouseX/Y) — go in the transform
+ *  picker as continuous inputs. */
+const MOUSE_CONTINUOUS_CHANNELS = ["MouseX", "MouseY"] as const;
+/** Mouse channels that publish booleans — useful in both visibility
+ *  (Show On = true / false) and transform (coerces to 0/1) bindings. */
+const MOUSE_BOOLEAN_CHANNELS = [
+  "MouseLeft",
+  "MouseRight",
+  "MouseMiddle",
+  "MouseInside",
+] as const;
+
 /** Fall back to defaults when the avatar hasn't explicitly set its config —
  *  mirrors what the runtime input sources do, so UIs see the same channels
  *  that will actually fire. */
@@ -65,16 +77,34 @@ export function getKnownChannels(
   if (kind === "visibility") {
     builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
-    builtins.push("Viseme", "Lipsync", "KeyEvent", "KeyRegion");
+    builtins.push(
+      "Viseme",
+      "Lipsync",
+      "KeyEvent",
+      "KeyRegion",
+      ...MOUSE_BOOLEAN_CHANNELS,
+    );
   } else {
     // Continuous numeric channels (suit linear mappings).
-    builtins.push("MicVolume", ...WEBCAM_CHANNELS);
+    builtins.push(
+      "MicVolume",
+      ...WEBCAM_CHANNELS,
+      ...MOUSE_CONTINUOUS_CHANNELS,
+    );
     // Discrete channels (suit stateMap mappings — phoneme/viseme/state/
     // region/key → number lookups). Lipsync is the recommended default
     // for sprite-sheet rigs because it combines audio + visual signals.
+    // Mouse buttons are booleans, useful in transform too (linear mapping
+    // 0..1 turns a click into a continuous output).
     builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
-    builtins.push("Viseme", "Lipsync", "KeyEvent", "KeyRegion");
+    builtins.push(
+      "Viseme",
+      "Lipsync",
+      "KeyEvent",
+      "KeyRegion",
+      ...MOUSE_BOOLEAN_CHANNELS,
+    );
   }
 
   const userChannels = new Set<string>();
@@ -115,6 +145,14 @@ export function getValuesForChannel(
       return [...VISEMES];
     case "MouthActive":
       return ["active"];
+    case "MouseLeft":
+    case "MouseRight":
+    case "MouseMiddle":
+    case "MouseInside":
+      // Booleans stringify to "true"/"false" through the visibility
+      // condition evaluator; expose both so Show On / equals checks work
+      // without the user having to remember the casing.
+      return ["true", "false"];
     case "KeyRegion": {
       const names = effectiveKeyboard(model)
         .regions.map((r) => r.name.trim())

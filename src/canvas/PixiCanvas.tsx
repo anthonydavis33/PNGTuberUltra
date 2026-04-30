@@ -10,6 +10,7 @@ import { PixiApp } from "./pixiApp";
 import { loadFilesAsAssets } from "./assetLoader";
 import { useAvatar } from "../store/useAvatar";
 import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
+import { getMouseSource } from "../inputs/MouseSource";
 
 /** True when the drag is actually carrying file(s) (vs text/internal drag). */
 function dragHasFiles(e: React.DragEvent): boolean {
@@ -32,6 +33,12 @@ export function PixiCanvas() {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+
+    // Wire the mouse input source up to this host so MouseX/Y can
+    // normalize against the canvas's bounding rect. Doing this here
+    // rather than in MouseSource itself keeps the input source library-
+    // free of React/DOM lookups.
+    getMouseSource().setHost(host);
 
     const pixi = new PixiApp();
     let cancelled = false;
@@ -62,6 +69,9 @@ export function PixiCanvas() {
       cancelled = true;
       pixi.destroy();
       appRef.current = null;
+      // Drop the host reference so MouseX/Y go null while the canvas
+      // is unmounted.
+      getMouseSource().setHost(null);
     };
   }, []);
 
