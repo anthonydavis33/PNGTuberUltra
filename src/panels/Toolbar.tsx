@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen, Plus, Save } from "lucide-react";
+import { FolderOpen, Plus, Redo2, Save, Undo2 } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { useAvatar } from "../store/useAvatar";
@@ -27,6 +27,12 @@ export function Toolbar() {
   const currentFilePath = useAvatar((s) => s.currentFilePath);
   const loadAvatar = useAvatar((s) => s.loadAvatar);
   const markSaved = useAvatar((s) => s.markSaved);
+  const undo = useAvatar((s) => s.undo);
+  const redo = useAvatar((s) => s.redo);
+  // Subscribe to history lengths so the buttons re-render when their
+  // enabled state should change.
+  const canUndo = useAvatar((s) => s.history.past.length > 0);
+  const canRedo = useAvatar((s) => s.history.future.length > 0);
 
   // ---- Add Sprite ----------------------------------------------------
   const onPickFiles = () => fileInputRef.current?.click();
@@ -166,18 +172,41 @@ export function Toolbar() {
     }
   };
 
-  // ---- Keyboard shortcuts: Ctrl+S, Ctrl+Shift+S, Ctrl+O -----------
-  // The handlers above close over component state, so they're not stable
-  // across renders. We hold the latest set in a ref so the keydown
-  // listener (bound once) always invokes the freshest version.
-  const handlersRef = useRef({ handleSave, handleSaveAs, handleOpen });
+  // ---- Keyboard shortcuts: Ctrl+S, Ctrl+Shift+S, Ctrl+O, Ctrl+Z,
+  // Ctrl+Shift+Z, Ctrl+Y -----------
+  // The save/open handlers close over component state, so they're not
+  // stable across renders. Undo/redo are stable Zustand refs but we keep
+  // them in the ref bag too for symmetry. The keydown listener is bound
+  // once and always invokes the freshest version through the ref.
+  const handlersRef = useRef({
+    handleSave,
+    handleSaveAs,
+    handleOpen,
+    undo,
+    redo,
+  });
   useEffect(() => {
-    handlersRef.current = { handleSave, handleSaveAs, handleOpen };
+    handlersRef.current = { handleSave, handleSaveAs, handleOpen, undo, redo };
   });
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isModifier(e)) return;
+
+      // Don't hijack typing in inputs/textareas — users typing into a
+      // field should be able to use undo on the field's own text.
+      // contentEditable elements behave the same way.
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
       const key = e.key.toLowerCase();
       if (key === "s") {
         e.preventDefault();
@@ -186,6 +215,17 @@ export function Toolbar() {
       } else if (key === "o") {
         e.preventDefault();
         void handlersRef.current.handleOpen();
+      } else if (key === "z") {
+        // Ctrl+Z = undo, Ctrl+Shift+Z = redo (the macOS / Photoshop /
+        // VS Code convention).
+        e.preventDefault();
+        if (e.shiftKey) handlersRef.current.redo();
+        else handlersRef.current.undo();
+      } else if (key === "y") {
+        // Ctrl+Y = redo (the Windows convention; second binding for
+        // muscle-memory parity).
+        e.preventDefault();
+        handlersRef.current.redo();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -213,6 +253,28 @@ export function Toolbar() {
       >
         <Plus size={14} />
         {isLoadingAssets ? "Loading..." : "Add Sprite"}
+      </button>
+
+      <span className="toolbar-divider" />
+
+      <button
+        className="tool-btn icon-only"
+        onClick={undo}
+        disabled={!canUndo}
+        title="Undo (Ctrl+Z)"
+        aria-label="Undo"
+      >
+        <Undo2 size={14} />
+      </button>
+
+      <button
+        className="tool-btn icon-only"
+        onClick={redo}
+        disabled={!canRedo}
+        title="Redo (Ctrl+Shift+Z or Ctrl+Y)"
+        aria-label="Redo"
+      >
+        <Redo2 size={14} />
       </button>
 
       <span className="toolbar-divider" />
@@ -261,7 +323,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 4d — webcam visemes</span>
+      <span className="status">Phase 5a — undo / redo</span>
     </header>
   );
 }

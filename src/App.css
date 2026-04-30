@@ -119,6 +119,16 @@ body,
   cursor: wait;
 }
 
+.tool-btn.icon-only {
+  padding: 4px 6px;
+}
+
+.tool-btn.icon-only:disabled {
+  /* Undo/redo buttons should signal "nothing to do" not "operation in
+   *  progress" — wait cursor reads as a load spinner cue. */
+  cursor: not-allowed;
+}
+
 /* Editor 3-pane grid -------------------------------------------------- */
 .editor {
   display: grid;

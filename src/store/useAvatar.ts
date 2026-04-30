@@ -19,18 +19,47 @@ import {
 } from "../types/avatar";
 import { unloadAsset } from "../canvas/assetLoader";
 
+/**
+ * Undo/redo history. We snapshot the immutable AvatarModel reference on
+ * every change — the model is built with copy-on-write semantics so old
+ * snapshots share most of their structure with newer ones, keeping the
+ * memory cost dominated by whatever subtree actually changed.
+ *
+ * Coalescing: edits landing within COALESCE_MS of the previous edit
+ * don't push a new history entry — they fold into the existing top-of-
+ * past entry. This is what makes dragging a slider register as ONE undo
+ * step instead of 60.
+ *
+ * Capped at HISTORY_LIMIT entries; oldest snapshot is discarded when full.
+ */
+interface History {
+  /** Snapshots PRECEDING each edit, oldest first. Top of stack = most
+   *  recent pre-edit state, i.e. what undo() restores to. */
+  past: AvatarModel[];
+  /** Snapshots that were undone, oldest first. Top of stack = next
+   *  state redo() will jump forward to. */
+  future: AvatarModel[];
+  /** performance.now() of the most recent edit. Used to detect coalesce
+   *  windows. Reset on undo/redo so the next edit always pushes a fresh
+   *  entry. */
+  lastEditAt: number;
+}
+
 interface AvatarStore {
   model: AvatarModel;
   selectedId: SpriteId | null;
   /** Sidecar registry: assetId -> { name, blobUrl, blob, mimeType }. Not part
    *  of AvatarModel JSON — the bytes are written into the .pnxr's assets/
-   *  folder instead. */
+   *  folder instead. Assets stay registered for the lifetime of the
+   *  current avatar load (no eager cleanup on sprite remove) so undo of
+   *  a removeSprite still has a live texture to render. */
   assets: Record<AssetId, AssetEntry>;
   /** True when the model has unsaved changes since the last load/save. */
   isDirty: boolean;
   /** Path to the .pnxr the avatar was last loaded from or saved to.
    *  Null until the user explicitly saves or opens. */
   currentFilePath: string | null;
+  history: History;
 
   // Actions
   selectSprite: (id: SpriteId | null) => void;
@@ -84,7 +113,19 @@ interface AvatarStore {
   ) => void;
   /** Mark the model as saved (clears dirty flag, optionally updates path). */
   markSaved: (filePath?: string) => void;
+
+  // Undo / redo
+  /** Restore the previous model state. No-op if past is empty. */
+  undo: () => void;
+  /** Re-apply a state that was undone. No-op if future is empty. */
+  redo: () => void;
 }
+
+/** Maximum coalesce gap: edits within this window of the previous edit
+ *  collapse into the same undo step. */
+const COALESCE_MS = 250;
+/** Maximum number of past snapshots retained. Older ones get discarded. */
+const HISTORY_LIMIT = 50;
 
 let nextSpriteNum = 1;
 const genId = (): SpriteId => `sprite-${nextSpriteNum++}`;
@@ -102,6 +143,15 @@ const placeholder: Sprite = {
 /** Module-level guard so loadAvatar/markSaved don't trip the
  *  auto-mark-dirty subscription that watches model ref changes. */
 let suppressDirty = false;
+/** Module-level guard so undo/redo (which set model directly) don't push
+ *  themselves onto the history stack via the auto-history subscription. */
+let suppressHistory = false;
+
+const emptyHistory = (): History => ({
+  past: [],
+  future: [],
+  lastEditAt: 0,
+});
 
 export const useAvatar = create<AvatarStore>((set, get) => ({
   model: {
@@ -112,6 +162,7 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
   assets: {},
   isDirty: false,
   currentFilePath: null,
+  history: emptyHistory(),
 
   selectSprite: (id) => set({ selectedId: id }),
 
@@ -170,30 +221,17 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
       nextSelected = remaining[idx]?.id ?? remaining[idx - 1]?.id ?? null;
     }
 
-    // Unload the asset if no other sprite uses it.
-    let nextAssets = state.assets;
-    if (sprite.asset) {
-      const stillReferenced = state.model.sprites.some(
-        (s) => s.id !== id && s.asset === sprite.asset,
-      );
-      if (!stillReferenced) {
-        const entry = state.assets[sprite.asset];
-        if (entry) {
-          void unloadAsset(entry);
-          const { [sprite.asset]: _removed, ...rest } = state.assets;
-          void _removed;
-          nextAssets = rest;
-        }
-      }
-    }
-
+    // Note: we deliberately do NOT unload the asset here, even if no other
+    // sprite is using it. Undo of a remove must put the sprite back with
+    // a live texture, which means the blob URL and Pixi texture cache need
+    // to outlive the model-level remove. Assets get cleaned up when the
+    // user loads a different avatar (loadAvatar's unload pass).
     set({
       model: {
         ...state.model,
         sprites: state.model.sprites.filter((s) => s.id !== id),
       },
       selectedId: nextSelected,
-      assets: nextAssets,
     });
   },
 
@@ -362,15 +400,21 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
       if (assets[id]) continue;
       void unloadAsset(state.assets[id]);
     }
+    // Suppress both the dirty subscription and the history subscription —
+    // loading is not a user-undoable edit. Wipe history entirely; users
+    // can't undo across file loads.
     suppressDirty = true;
+    suppressHistory = true;
     set({
       model,
       assets,
       selectedId: model.sprites[0]?.id ?? null,
       isDirty: false,
       currentFilePath: filePath,
+      history: emptyHistory(),
     });
     suppressDirty = false;
+    suppressHistory = false;
   },
 
   markSaved: (filePath) => {
@@ -382,6 +426,45 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
     }));
     suppressDirty = false;
   },
+
+  undo: () => {
+    const state = get();
+    const h = state.history;
+    if (h.past.length === 0) return;
+
+    const previousModel = h.past[h.past.length - 1];
+    suppressHistory = true;
+    set({
+      model: previousModel,
+      history: {
+        past: h.past.slice(0, -1),
+        // Push the CURRENT model onto future so redo can restore it.
+        future: [...h.future, state.model],
+        // Reset the coalesce window — the next user edit should start a
+        // fresh history entry, not fold into anything.
+        lastEditAt: 0,
+      },
+    });
+    suppressHistory = false;
+  },
+
+  redo: () => {
+    const state = get();
+    const h = state.history;
+    if (h.future.length === 0) return;
+
+    const nextModel = h.future[h.future.length - 1];
+    suppressHistory = true;
+    set({
+      model: nextModel,
+      history: {
+        past: [...h.past, state.model],
+        future: h.future.slice(0, -1),
+        lastEditAt: 0,
+      },
+    });
+    suppressHistory = false;
+  },
 }));
 
 // Auto-mark-dirty: any change to `model` flips isDirty. Subscriptions outside
@@ -392,4 +475,51 @@ useAvatar.subscribe((current, previous) => {
   if (current.model !== previous.model && !current.isDirty) {
     useAvatar.setState({ isDirty: true });
   }
+});
+
+// Auto-history: every model change pushes the previous model onto the
+// undo stack, with a time-based coalescing window so rapid edits (slider
+// drags, NumberField scrubs) collapse into a single undo step.
+//
+// suppressHistory is set by undo/redo themselves and by loadAvatar — those
+// are the cases where the model change is itself a history operation, not
+// a user edit.
+useAvatar.subscribe((current, previous) => {
+  if (suppressHistory) return;
+  if (current.model === previous.model) return;
+
+  const now = performance.now();
+  const h = current.history;
+
+  // Coalesce: rapid edits within COALESCE_MS fold into the existing top
+  // entry (which still holds the model from BEFORE the coalesce window
+  // started — exactly what we want as the undo target). We just bump
+  // the timestamp so the next edit knows the window is still open.
+  if (now - h.lastEditAt < COALESCE_MS && h.past.length > 0) {
+    suppressHistory = true;
+    useAvatar.setState({
+      history: { ...h, lastEditAt: now, future: [] },
+    });
+    suppressHistory = false;
+    return;
+  }
+
+  // Push a new entry. previous.model is the snapshot from BEFORE the edit
+  // that just landed — that's the state undo() should restore to.
+  const newPast =
+    h.past.length >= HISTORY_LIMIT
+      ? [...h.past.slice(1), previous.model]
+      : [...h.past, previous.model];
+
+  suppressHistory = true;
+  useAvatar.setState({
+    history: {
+      past: newPast,
+      // Any new edit invalidates the redo stack — the user just diverged
+      // from whatever future state the redo would have restored.
+      future: [],
+      lastEditAt: now,
+    },
+  });
+  suppressHistory = false;
 });
