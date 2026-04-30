@@ -44,6 +44,11 @@ export interface Sprite {
    *  frame is rendered at a time, advancing automatically at fps according
    *  to loopMode. Hit testing falls back to bounding-box for sheet sprites. */
   sheet?: SpriteSheet;
+  /** Event-triggered animations. Tween bodies overlay additive offsets on
+   *  the transform pipeline (after bindings, before modifiers). SheetRange
+   *  bodies override the frame index, beating frame bindings. Optional;
+   *  most sprites won't have any. */
+  animations?: Animation[];
 }
 
 // ---------------------------------------------------------------- Sprite Sheet
@@ -253,6 +258,64 @@ export type Modifier =
   | SpringModifier
   | DragModifier
   | SineModifier;
+
+// ---------------------------------------------------------------- Animations
+
+/**
+ * Triggers — what causes an animation to fire / advance.
+ *
+ * - `channelEquals`: the channel currently equals the given string. Compares
+ *   stringified channel values, so booleans coerce to "true"/"false". Use
+ *   for things like KeyRegion=left, Lipsync=AI, KeyEvent=t.
+ * - `channelTruthy`: the channel currently has any non-null, non-"false",
+ *   non-empty value. Use for booleans (MouseLeft, MouthActive) where you
+ *   don't want to type out the value string.
+ */
+export type AnimationTrigger =
+  | { kind: "channelEquals"; channel: string; value: string }
+  | { kind: "channelTruthy"; channel: string };
+
+/**
+ * Animation body — what the animation actually does when its progress is
+ * non-zero.
+ *
+ * - `tween`: additive transform offsets at peak progress. e.g.
+ *   `targets: { rotation: 30 }` means "+30° rotation when progress=1".
+ *   Stacks on top of binding-driven base transforms; modifiers run after.
+ * - `sheetRange`: sprite-sheet frame index, computed as startFrame +
+ *   round(progress * (endFrame - startFrame)). Takes priority over frame
+ *   bindings — the animation is the user's explicit override.
+ */
+export type AnimationBody =
+  | { kind: "tween"; targets: Partial<Transform> }
+  | { kind: "sheetRange"; startFrame: number; endFrame: number };
+
+/** Animation playback shape relative to the trigger. */
+export type AnimationMode =
+  | "oneShot" // Edge-triggered: progress 0→1→0 over duration, regardless of
+  //   what the trigger does after firing. Use for press-and-release
+  //   actions like "press T → wave once."
+  | "holdActive";
+//   Progress chases the trigger state. While trigger is active,
+//   progress advances toward 1; while inactive, regresses toward 0.
+//   Use for "hold key → bring paw down, release → return."
+
+/** Built-in easing curves. Pure functions (number→number) over [0, 1]. */
+export type AnimationEasing = "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface Animation {
+  id: string;
+  /** Display name shown in the editor. Doesn't affect runtime. */
+  name: string;
+  trigger: AnimationTrigger;
+  body: AnimationBody;
+  /** Total time in ms from progress=0 to progress=1.
+   *  oneShot: forward+back takes durationMs total (forward leg = duration/2).
+   *  holdActive: time to fully ramp from 0 to 1 while held. */
+  durationMs: number;
+  easing: AnimationEasing;
+  mode: AnimationMode;
+}
 
 export interface AvatarModel {
   schema: 1;

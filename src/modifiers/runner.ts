@@ -12,6 +12,7 @@
 // from the model.
 
 import { applyTransformBindings } from "../bindings/evaluate";
+import { type AnimationRunner } from "../animations/runner";
 import {
   type DragModifier,
   type ModifierTarget,
@@ -68,11 +69,21 @@ function composeTransforms(
 export class ModifierRunner {
   private springStates = new Map<string, SpringState>();
   private dragStates = new Map<string, DragState>();
+  /** Set by PixiApp before tick. baseTransform() reads tween overlays
+   *  off it for every sprite (including parents reached via parent-
+   *  modifier recursion) so animations land before modifier passes. */
+  private animationRunner: AnimationRunner | null = null;
 
   // Per-frame caches — cleared by beginFrame()
   private worldCache = new Map<string, EffectiveTransform>();
   private visiting = new Set<string>();
   private warnedCycle = new Set<string>();
+
+  /** Wire the runner that supplies per-sprite tween overlays. PixiApp
+   *  calls this once at construction. */
+  setAnimationRunner(runner: AnimationRunner): void {
+    this.animationRunner = runner;
+  }
 
   /** Call once at the start of each frame. */
   beginFrame(): void {
@@ -154,12 +165,23 @@ export class ModifierRunner {
 
   private baseTransform(sprite: Sprite): EffectiveTransform {
     const overrides = applyTransformBindings(sprite);
+    // Animation tween offsets stack ADDITIVELY on top of the binding-
+    // resolved value (or the sprite's stored base if no binding fires).
+    // This ordering means a `Wave` animation rotating +30° composes
+    // cleanly with a `MicVolume → rotation` binding pulling -5°: the
+    // sprite ends up at base + (-5) + (+30) = base + 25. Modifiers run
+    // after, so spring/drag smooth the combined target.
+    const tween = this.animationRunner?.getOverlay(sprite.id).tweenOffsets ?? {};
     return {
-      x: overrides.x ?? sprite.transform.x,
-      y: overrides.y ?? sprite.transform.y,
-      rotation: overrides.rotation ?? sprite.transform.rotation,
-      scaleX: overrides.scaleX ?? sprite.transform.scaleX,
-      scaleY: overrides.scaleY ?? sprite.transform.scaleY,
+      x: (overrides.x ?? sprite.transform.x) + (tween.x ?? 0),
+      y: (overrides.y ?? sprite.transform.y) + (tween.y ?? 0),
+      rotation:
+        (overrides.rotation ?? sprite.transform.rotation) +
+        (tween.rotation ?? 0),
+      scaleX:
+        (overrides.scaleX ?? sprite.transform.scaleX) + (tween.scaleX ?? 0),
+      scaleY:
+        (overrides.scaleY ?? sprite.transform.scaleY) + (tween.scaleY ?? 0),
       alpha: overrides.alpha ?? 1,
     };
   }

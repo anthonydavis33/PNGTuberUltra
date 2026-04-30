@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   Anchor,
+  Animation,
   AssetEntry,
   AssetId,
   AvatarModel,
@@ -101,6 +102,17 @@ interface AvatarStore {
     spriteId: SpriteId,
     modifierId: string,
     patch: Partial<Modifier>,
+  ) => void;
+
+  // Animations (per-sprite). Order in the array doesn't affect runtime —
+  // animations stack additively, and the latest-firing sheetRange wins
+  // for the frame override.
+  addAnimation: (spriteId: SpriteId, animation: Animation) => void;
+  removeAnimation: (spriteId: SpriteId, animationId: string) => void;
+  updateAnimation: (
+    spriteId: SpriteId,
+    animationId: string,
+    patch: Partial<Animation>,
   ) => void;
 
   // File I/O
@@ -385,6 +397,52 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
                   m.id === modifierId
                     ? ({ ...m, ...patch } as Modifier)
                     : m,
+                ),
+              }
+            : s,
+        ),
+      },
+    })),
+
+  addAnimation: (spriteId, animation) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? { ...s, animations: [...(s.animations ?? []), animation] }
+            : s,
+        ),
+      },
+    })),
+
+  removeAnimation: (spriteId, animationId) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? {
+                ...s,
+                animations: (s.animations ?? []).filter(
+                  (a) => a.id !== animationId,
+                ),
+              }
+            : s,
+        ),
+      },
+    })),
+
+  updateAnimation: (spriteId, animationId, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === spriteId
+            ? {
+                ...s,
+                animations: (s.animations ?? []).map((a) =>
+                  a.id === animationId ? { ...a, ...patch } : a,
                 ),
               }
             : s,

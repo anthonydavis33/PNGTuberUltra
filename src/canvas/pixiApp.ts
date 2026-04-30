@@ -25,6 +25,7 @@ import {
   isTransformBinding,
 } from "../bindings/evaluate";
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
+import { AnimationRunner } from "../animations/runner";
 import {
   computeCurrentFrame,
   sliceSheet,
@@ -65,6 +66,7 @@ export class PixiApp {
   private windowPointerUpHandler: ((e: PointerEvent) => void) | null = null;
   private host: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private readonly animationRunner = new AnimationRunner();
   private readonly modifierRunner = new ModifierRunner();
   /** Wallclock time of the previous tick (in seconds), for dt computation. */
   private lastTickTime: number | null = null;
@@ -76,6 +78,9 @@ export class PixiApp {
 
   async init(host: HTMLElement): Promise<void> {
     this.host = host;
+    // Wire the animation runner into the modifier runner so tween
+    // overlays land in baseTransform, before modifier passes run.
+    this.modifierRunner.setAnimationRunner(this.animationRunner);
     await this.app.init({
       background: "#1a1a1a",
       resizeTo: host,
@@ -148,8 +153,9 @@ export class PixiApp {
   ): void {
     if (this.destroyed || !this.app.stage) return;
 
-    // Drop modifier state for any modifier no longer in the model.
+    // Drop runtime state for any modifier or animation no longer in the model.
     this.modifierRunner.pruneStaleState(modelSprites);
+    this.animationRunner.pruneStaleState(modelSprites);
 
     const seen = new Set<string>();
     for (const ms of modelSprites) {
@@ -212,7 +218,8 @@ export class PixiApp {
   private tickBindings = (): void => {
     if (this.destroyed) return;
 
-    const now = performance.now() / 1000;
+    const nowMs = performance.now();
+    const now = nowMs / 1000;
     const dt =
       this.lastTickTime === null
         ? 1 / 60
@@ -222,6 +229,9 @@ export class PixiApp {
     const state = useAvatar.getState();
     const sprites = state.model.sprites;
     const selectedId = state.selectedId;
+    // Order matters: animations first, so modifierRunner.baseTransform
+    // can read tween overlays via the wired animationRunner reference.
+    this.animationRunner.beginFrame(sprites, dt, nowMs);
     this.modifierRunner.beginFrame();
 
     let selectedTransform: EffectiveTransform | null = null;
@@ -232,18 +242,22 @@ export class PixiApp {
 
       pixiSprite.visible = computeSpriteVisibility(ms);
 
-      // Sprite-sheet frame swap. Priority:
-      //   1. A `frame` transform binding's CURRENT output (channel-driven —
+      // Sprite-sheet frame swap. Priority (highest first):
+      //   1. An animation sheetRange override (event-triggered playback —
+      //      "press T → play frames 4..10 once"). The user's explicit
+      //      override beats anything channel-driven below.
+      //   2. A `frame` transform binding's CURRENT output (channel-driven —
       //      phoneme/viseme stateMap lookups, MicVolume linear, etc.)
-      //   2. If a frame binding EXISTS but produced no value this tick
+      //   3. If a frame binding EXISTS but produced no value this tick
       //      (channel is null), hold the last value it produced. This is
       //      the canonical lipsync rig at rest: MicPhoneme silent / Viseme
       //      neutral → mouth holds the last shape instead of cycling.
-      //   3. No frame binding configured at all → fps auto-advance against
+      //   4. No frame binding configured at all → fps auto-advance against
       //      the global clock (multiple sheets at same fps stay in lockstep).
       if (ms.sheet) {
         const sheetState = this.spriteSheetMap.get(ms.id);
         if (sheetState && sheetState.frames.length > 0) {
+          const animFrame = this.animationRunner.getOverlay(ms.id).frameOverride;
           const overrides = applyTransformBindings(ms);
           const fromBinding = overrides.frame;
           const hasFrameBinding = ms.bindings.some(
@@ -251,7 +265,12 @@ export class PixiApp {
           );
 
           let idx: number;
-          if (fromBinding !== undefined) {
+          if (animFrame !== null) {
+            idx = animFrame;
+            // Don't update lastBoundFrame from animation output — when the
+            // animation ends we want the rig to fall back to whatever the
+            // bindings were saying, not freeze on the animation's last frame.
+          } else if (fromBinding !== undefined) {
             idx = Math.floor(fromBinding);
             this.lastBoundFrame.set(ms.id, idx);
           } else if (hasFrameBinding) {

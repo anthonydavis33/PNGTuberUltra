@@ -848,10 +848,167 @@ body,
 }
 
 /* Modifier rows ------------------------------------------------------ */
-.modifier-list {
+.modifier-list,
+.animation-list {
   list-style: none;
   padding: 0;
   margin: 0;
+}
+
+/* Animation rows --------------------------------------------------- */
+.animation-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.animation-row-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  gap: 6px;
+  align-items: center;
+}
+
+.animation-name {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.animation-name:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.animation-row-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.animation-row-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.animation-row select,
+.animation-row input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.animation-row select:focus,
+.animation-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.animation-trigger-op,
+.animation-trigger-value,
+.animation-mode,
+.animation-easing {
+  font-family: ui-monospace, monospace;
+}
+
+.animation-row .number-field {
+  display: inline-flex;
+  align-items: center;
+}
+
+.animation-row .number-field-label:empty {
+  display: none;
+}
+
+.animation-row .number-field input {
+  width: 60px;
+}
+
+.animation-body-toggle {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.animation-body-toggle button {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.animation-body-toggle button.active {
+  background: rgba(255, 119, 85, 0.18);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.animation-body-toggle button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.animation-tween-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.animation-tween-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--bg);
+}
+
+.animation-tween-target.active {
+  border-color: var(--accent);
+  background: rgba(255, 119, 85, 0.08);
+}
+
+.animation-tween-target input[type="checkbox"] {
+  margin: 0;
+}
+
+.animation-tween-target-label {
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.animation-tween-target.active .animation-tween-target-label {
+  color: var(--text);
 }
 
 .modifier-row {

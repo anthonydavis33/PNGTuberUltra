@@ -8,12 +8,14 @@ import {
   defaultStateMapMapping,
 } from "../components/TransformBindingRow";
 import { ModifierRow } from "../components/ModifierRow";
+import { AnimationRow } from "../components/AnimationRow";
 import { ShowOnPopover } from "./ShowOnPopover";
 import { getKnownChannels } from "../bindings/channels";
 import {
   DEFAULT_SPRITE_SHEET,
   DEFAULT_TRANSFORM,
   type Anchor,
+  type Animation,
   type Modifier,
   type ModifierType,
   type SpriteSheet,
@@ -40,6 +42,9 @@ export function Properties() {
   const addModifier = useAvatar((s) => s.addModifier);
   const removeModifier = useAvatar((s) => s.removeModifier);
   const updateModifier = useAvatar((s) => s.updateModifier);
+  const addAnimation = useAvatar((s) => s.addAnimation);
+  const removeAnimation = useAvatar((s) => s.removeAnimation);
+  const updateAnimation = useAvatar((s) => s.updateAnimation);
   const model = useAvatar((s) => s.model);
   const [pendingModifierType, setPendingModifierType] =
     useState<ModifierType>("spring");
@@ -132,6 +137,25 @@ export function Properties() {
       };
     }
     addBinding(sprite.id, binding);
+  };
+
+  const addNewAnimation = (): void => {
+    const id = `a-${crypto.randomUUID().slice(0, 8)}`;
+    // Sensible default: a one-shot rotation wave triggered by Mouse Left.
+    // The user almost certainly wants to change BOTH the trigger and the
+    // body, but starting with a complete, working animation is much less
+    // intimidating than starting with empty fields. They tweak from
+    // there.
+    const animation: Animation = {
+      id,
+      name: "Wave",
+      trigger: { kind: "channelTruthy", channel: "MouseLeft" },
+      body: { kind: "tween", targets: { rotation: 30 } },
+      durationMs: 400,
+      easing: "easeInOut",
+      mode: "oneShot",
+    };
+    addAnimation(sprite.id, animation);
   };
 
   const addNewModifier = (): void => {
@@ -449,6 +473,46 @@ export function Properties() {
                 onRemove={() => removeModifier(sprite.id, m.id)}
                 parentChoices={model.sprites}
                 currentSpriteId={sprite.id}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ============= ANIMATIONS ============= */}
+      <section className="properties-section">
+        <div className="properties-section-header">
+          <span>Animations</span>
+          <div className="properties-section-actions">
+            <button
+              onClick={addNewAnimation}
+              className="tool-btn"
+              title="Event-triggered tween or sprite-sheet playback. Defaults to a one-shot rotation wave on Mouse Left — change trigger / body / mode after."
+            >
+              <Plus size={12} />
+              Add
+            </button>
+          </div>
+        </div>
+
+        {!sprite.animations || sprite.animations.length === 0 ? (
+          <p className="empty">
+            No animations. Bindings cover continuous response; add an
+            animation when you want a time-based effect on an event — e.g.
+            press a key to wave, click to squash, hold a region to bring a
+            paw down with smoothing.
+          </p>
+        ) : (
+          <ul className="animation-list">
+            {sprite.animations.map((a) => (
+              <AnimationRow
+                key={a.id}
+                animation={a}
+                channels={visibilityChannels}
+                model={model}
+                hasSheet={!!sprite.sheet}
+                onChange={(patch) => updateAnimation(sprite.id, a.id, patch)}
+                onRemove={() => removeAnimation(sprite.id, a.id)}
               />
             ))}
           </ul>

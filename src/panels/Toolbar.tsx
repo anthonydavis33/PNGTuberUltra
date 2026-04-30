@@ -323,7 +323,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 6a — mouse input</span>
+      <span className="status">Phase 6b — animations</span>
     </header>
   );
 }
