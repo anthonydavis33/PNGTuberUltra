@@ -6,13 +6,34 @@
 //                       → blendshapes + transformation matrix
 //                       → derived per-channel values published to InputBus
 //
-// Channels published (all continuous):
-//   HeadYaw / HeadPitch / HeadRoll  — degrees, derived from the face's
-//     transformation matrix (Euler XYZ)
-//   MouthOpen                       — 0..1, ARKit `jawOpen` blendshape
-//   BrowRaise                       — 0..1, average of innerUp + outerUp L/R
-//   EyesClosed                      — 0..1, average of eyeBlinkLeft/Right
-//   GazeX / GazeY                   — -1..1, derived from eyeLookOut/In/Up/Down
+// Channels published:
+//   Continuous (numeric, EMA-smoothed):
+//     HeadYaw / HeadPitch / HeadRoll  — degrees, derived from the face's
+//       transformation matrix (Euler XYZ)
+//     MouthOpen                       — 0..1, ARKit `jawOpen` blendshape
+//     MouthClose                      — 0..1, lip closure (weak signal,
+//       rarely exceeds 0.3 even at firm closure — kept for completeness)
+//     MouthPress                      — 0..1, avg of pressLeft/Right
+//       (the actual MBP signal — fires when lips are firmly pressed)
+//     MouthFunnel                     — 0..1, rounded medium (O signal)
+//     MouthPucker                     — 0..1, forward pucker (U/W signal)
+//     MouthRollLower                  — 0..1, lower lip on teeth (FV signal)
+//     MouthSmile                      — 0..1, avg of smileLeft/Right (EE)
+//     BrowRaise                       — 0..1, average of innerUp + outerUp L/R
+//     EyesClosed                      — 0..1, average of eyeBlinkLeft/Right
+//     GazeX / GazeY                   — -1..1, derived from eyeLookOut/In/Up/Down
+//   Discrete (string, hysteresis):
+//     Viseme       — one of "AI"/"EE"/"O"/"U"/"MBP"/"FV"/"Rest" while the
+//       webcam is running, null when stopped. Picked per frame by a
+//       priority ladder over mouth blendshapes. Sticky for
+//       VISEME_MIN_HOLD_MS to avoid flicker. "Rest" = camera running but
+//       no active shape (the engaged-but-neutral pose); null = camera
+//       not running. This split lets sheet rigs include a designated
+//       rest frame, while visibility bindings can still detect "off".
+//     MouthActive  — "active" when Viseme is one of the active shapes
+//       (non-Rest non-null), otherwise null. Discrete gate channel for
+//       Show On / visibility bindings — the webcam-side analogue of
+//       MicState=talking.
 //
 // Smoothing: simple per-channel EMA (`α = 0.4`) — MediaPipe outputs are
 // noisy at face level. Tighter smoothing makes the avatar feel laggy;
@@ -27,6 +48,7 @@ import {
   type FaceLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import { inputBus } from "./InputBus";
+import { type Viseme } from "../types/avatar";
 
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
@@ -39,18 +61,81 @@ const DEFAULT_SMOOTHING = 0.4;
 const MIN_SMOOTHING = 0.05;
 const MAX_SMOOTHING = 1.0;
 
+/** Continuous numeric channels (EMA-smoothed before publish). */
 export const WEBCAM_CHANNELS = [
   "HeadYaw",
   "HeadPitch",
   "HeadRoll",
   "MouthOpen",
+  "MouthClose",
+  "MouthPress",
+  "MouthFunnel",
+  "MouthPucker",
+  "MouthRollLower",
+  "MouthSmile",
   "BrowRaise",
   "EyesClosed",
   "GazeX",
   "GazeY",
 ] as const;
 
+/** Discrete string channels (published with hysteresis, NOT EMA-smoothed). */
+export const WEBCAM_DISCRETE_CHANNELS = ["Viseme", "MouthActive"] as const;
+
+/** All channels published by the webcam source. UIs use this for things like
+ *  "blank out everything when the source stops." */
+export const ALL_WEBCAM_CHANNELS = [
+  ...WEBCAM_CHANNELS,
+  ...WEBCAM_DISCRETE_CHANNELS,
+] as const;
+
 type WebcamChannel = (typeof WEBCAM_CHANNELS)[number];
+
+// Viseme hysteresis — mirrors MicSource's PHONEME_MIN_HOLD_MS so audio
+// phoneme and webcam viseme have the same feel.
+const VISEME_MIN_HOLD_MS = 80;
+
+/**
+ * Per-viseme thresholds, evaluated top-to-bottom — first match wins. If NO
+ * rule matches, the classifier emits "Rest" (engaged-but-neutral pose).
+ *
+ * Tuning notes — empirical from MediaPipe FaceLandmarker output:
+ *   - Blendshapes are heavily compressed in practice. mouthFunnel/Pucker/
+ *     RollLower/Press rarely exceed ~0.4 even at exaggerated shapes.
+ *     Thresholds need to live in the 0.15-0.3 range, not the 0.5-0.6
+ *     range you'd guess from the documented 0..1 scale.
+ *   - U vs O: both fire mouthFunnel AND mouthPucker — they're not
+ *     orthogonal signals. The cleanest separator is mouthOpen: O is
+ *     "rounded with mouth open", U is "rounded with mouth small."
+ *   - MBP: mouthClose is too weak to be useful. mouthPress (lips
+ *     pressing together) is what actually fires for the M/B/P shape.
+ *   - EE: mouthSmile + low mouthOpen. Smile alone isn't enough — a
+ *     happy "ahhh" is still AI, not EE.
+ *
+ * Order matters when rules can both fire: FV / MBP first (most specific
+ * non-vowel shapes), EE before AI (smile is a more specific open shape),
+ * U before O so the small-mouth case has priority.
+ */
+const VISEME_RULES: Array<{
+  viseme: Viseme;
+  test: (b: Readonly<Record<WebcamChannel, number>>) => boolean;
+}> = [
+  { viseme: "FV", test: (b) => b.MouthRollLower > 0.18 },
+  { viseme: "MBP", test: (b) => b.MouthPress > 0.22 },
+  { viseme: "EE", test: (b) => b.MouthSmile > 0.25 && b.MouthOpen < 0.25 },
+  // U: rounded + mouth small/forward.
+  {
+    viseme: "U",
+    test: (b) => b.MouthPucker > 0.3 && b.MouthOpen < 0.2,
+  },
+  // O: rounded + mouth open (so "OOO" doesn't get stolen by U).
+  {
+    viseme: "O",
+    test: (b) =>
+      (b.MouthFunnel > 0.18 || b.MouthPucker > 0.25) && b.MouthOpen > 0.15,
+  },
+  { viseme: "AI", test: (b) => b.MouthOpen > 0.25 },
+];
 
 class WebcamSource {
   private stream: MediaStream | null = null;
@@ -64,11 +149,24 @@ class WebcamSource {
     HeadPitch: 0,
     HeadRoll: 0,
     MouthOpen: 0,
+    MouthClose: 0,
+    MouthPress: 0,
+    MouthFunnel: 0,
+    MouthPucker: 0,
+    MouthRollLower: 0,
+    MouthSmile: 0,
     BrowRaise: 0,
     EyesClosed: 0,
     GazeX: 0,
     GazeY: 0,
   };
+
+  // Viseme classifier state — sticky with min hold to avoid flicker.
+  // While the camera is running, value is one of the VISEMES enum
+  // including "Rest" for neutral pose. null only while the camera is
+  // stopped (set by the stop() handler, not the classifier itself).
+  private currentViseme: Viseme | null = null;
+  private visemeSwitchedAt = 0;
 
   /** Current EMA smoothing factor. Changeable at runtime. */
   private smoothingFactor: number = DEFAULT_SMOOTHING;
@@ -84,7 +182,7 @@ class WebcamSource {
     // base transform alone. UIs read these with `?? 0` fallbacks for
     // display. Publishing 0 here would silently override manual transform
     // edits on any sprite bound to a webcam channel.
-    for (const c of WEBCAM_CHANNELS) inputBus.publish(c, null);
+    for (const c of ALL_WEBCAM_CHANNELS) inputBus.publish(c, null);
   }
 
   isRunning(): boolean {
@@ -182,6 +280,11 @@ class WebcamSource {
       // comment for why this matters.
       inputBus.publish(c, null);
     }
+    // Reset viseme state and clear the discrete channels.
+    this.currentViseme = null;
+    this.visemeSwitchedAt = 0;
+    inputBus.publish("Viseme", null);
+    inputBus.publish("MouthActive", null);
   }
 
   /** Free the FaceLandmarker model entirely. Use during HMR cleanup. */
@@ -224,7 +327,22 @@ class WebcamSource {
       const bs = (name: string): number =>
         blendshapes.find((c) => c.categoryName === name)?.score ?? 0;
 
+      // Mouth shape blendshapes — these double as raw channels (so users
+      // can build custom logic via threshold/linear bindings) AND inputs
+      // to the Viseme classifier below.
       this.publishSmoothed("MouthOpen", bs("jawOpen"));
+      this.publishSmoothed("MouthClose", bs("mouthClose"));
+      this.publishSmoothed(
+        "MouthPress",
+        (bs("mouthPressLeft") + bs("mouthPressRight")) / 2,
+      );
+      this.publishSmoothed("MouthFunnel", bs("mouthFunnel"));
+      this.publishSmoothed("MouthPucker", bs("mouthPucker"));
+      this.publishSmoothed("MouthRollLower", bs("mouthRollLower"));
+      this.publishSmoothed(
+        "MouthSmile",
+        (bs("mouthSmileLeft") + bs("mouthSmileRight")) / 2,
+      );
 
       this.publishSmoothed(
         "BrowRaise",
@@ -251,7 +369,60 @@ class WebcamSource {
         2;
       this.publishSmoothed("GazeX", gazeX);
       this.publishSmoothed("GazeY", gazeY);
+
+      // Derive the discrete Viseme channel from the smoothed mouth
+      // blendshapes we just published. Reading from `this.smoothed` (not
+      // raw bs() values) means the viseme thresholds see the same numbers
+      // the user sees on the bus and in the status bar — predictable.
+      this.classifyViseme();
     }
+  }
+
+  /**
+   * Pick the dominant viseme from the current smoothed mouth blendshapes
+   * via VISEME_RULES (priority ladder, top-to-bottom = most specific
+   * shapes first). If no rule matches, candidate is "Rest".
+   *
+   * Hysteresis: once a value is published, hold it for VISEME_MIN_HOLD_MS
+   * before letting a different value win, so frames don't flicker on
+   * values hovering near a threshold. Applies to Rest transitions too.
+   *
+   * Also publishes MouthActive: "active" when Viseme is an active shape
+   * (non-Rest), otherwise null. This gives Show On / visibility bindings
+   * a clean discrete gate analogous to MicState=talking — the multi-
+   * sprite "show neutral, hide talking" pattern still works because
+   * MouthActive=null at Rest.
+   */
+  private classifyViseme(): void {
+    let candidate: Viseme = "Rest";
+    for (const rule of VISEME_RULES) {
+      if (rule.test(this.smoothed)) {
+        candidate = rule.viseme;
+        break;
+      }
+    }
+
+    const now = performance.now();
+
+    // Reject the switch if we changed values too recently — keeps the rig
+    // calm at threshold edges.
+    let published: Viseme = candidate;
+    if (
+      this.currentViseme !== null &&
+      this.currentViseme !== candidate &&
+      now - this.visemeSwitchedAt < VISEME_MIN_HOLD_MS
+    ) {
+      published = this.currentViseme;
+    } else if (this.currentViseme !== candidate) {
+      this.currentViseme = candidate;
+      this.visemeSwitchedAt = now;
+    }
+
+    inputBus.publish("Viseme", published);
+    inputBus.publish(
+      "MouthActive",
+      published !== "Rest" ? "active" : null,
+    );
   }
 
   private publishSmoothed(key: WebcamChannel, raw: number): void {

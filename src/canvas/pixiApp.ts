@@ -22,6 +22,7 @@ import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
 import {
   applyTransformBindings,
   computeSpriteVisibility,
+  isTransformBinding,
 } from "../bindings/evaluate";
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
 import {
@@ -52,6 +53,12 @@ export class PixiApp {
     string,
     { sig: string; frames: Texture[] }
   >();
+  /** Last frame index produced by a frame binding for each sprite. Used
+   *  to hold the frame steady when a frame binding is configured but the
+   *  channel value is currently null (e.g., MicPhoneme silent / Viseme at
+   *  neutral). Auto-advance only kicks in when no frame binding exists at
+   *  all; otherwise the rig should be deterministic. */
+  private readonly lastBoundFrame = new Map<string, number>();
   private dragState: { id: string; lastX: number; lastY: number } | null = null;
   private destroyed = false;
   private placeholderTexture: Texture | null = null;
@@ -129,6 +136,7 @@ export class PixiApp {
     this.spriteSheetMap.clear();
     this.spriteMap.clear();
     this.spriteAssetMap.clear();
+    this.lastBoundFrame.clear();
     this.placeholderTexture = null;
     this.dragState = null;
   }
@@ -169,6 +177,7 @@ export class PixiApp {
         this.spriteMap.delete(id);
         this.spriteAssetMap.delete(id);
         this.disposeSheet(id);
+        this.lastBoundFrame.delete(id);
       }
     }
 
@@ -224,19 +233,33 @@ export class PixiApp {
       pixiSprite.visible = computeSpriteVisibility(ms);
 
       // Sprite-sheet frame swap. Priority:
-      //   1. A `frame` transform binding's output (lets channels drive
-      //      frame index — phoneme-to-frame lookups, volume-to-frame, etc.)
-      //   2. Otherwise auto-advance via fps + loopMode against the global
-      //      clock, so multiple sheet sprites at the same fps stay in lockstep.
+      //   1. A `frame` transform binding's CURRENT output (channel-driven —
+      //      phoneme/viseme stateMap lookups, MicVolume linear, etc.)
+      //   2. If a frame binding EXISTS but produced no value this tick
+      //      (channel is null), hold the last value it produced. This is
+      //      the canonical lipsync rig at rest: MicPhoneme silent / Viseme
+      //      neutral → mouth holds the last shape instead of cycling.
+      //   3. No frame binding configured at all → fps auto-advance against
+      //      the global clock (multiple sheets at same fps stay in lockstep).
       if (ms.sheet) {
         const sheetState = this.spriteSheetMap.get(ms.id);
         if (sheetState && sheetState.frames.length > 0) {
           const overrides = applyTransformBindings(ms);
           const fromBinding = overrides.frame;
-          const idx =
-            fromBinding !== undefined
-              ? Math.floor(fromBinding)
-              : computeCurrentFrame(ms.sheet, now);
+          const hasFrameBinding = ms.bindings.some(
+            (b) => isTransformBinding(b) && b.target === "frame",
+          );
+
+          let idx: number;
+          if (fromBinding !== undefined) {
+            idx = Math.floor(fromBinding);
+            this.lastBoundFrame.set(ms.id, idx);
+          } else if (hasFrameBinding) {
+            idx = this.lastBoundFrame.get(ms.id) ?? 0;
+          } else {
+            idx = computeCurrentFrame(ms.sheet, now);
+          }
+
           const safeIdx = Math.max(
             0,
             Math.min(idx, sheetState.frames.length - 1),

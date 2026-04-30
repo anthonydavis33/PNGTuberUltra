@@ -58,8 +58,12 @@ function defaultLinearMapping(): BindingMappingLinear {
 
 /** Default stateMap mapping when switching from linear. Pre-populates entries
  *  from the channel's known discrete values if any (e.g. picking
- *  MicPhoneme + State Map gives you A→0, I→1, U→2, E→3, O→4 instantly). */
-function defaultStateMapMapping(
+ *  MicPhoneme + State Map gives you A→0, I→1, U→2, E→3, O→4 instantly).
+ *
+ *  Exported so Properties.tsx can use it when creating frame bindings on
+ *  sprite-sheet sprites — the sheet rig's natural default is a stateMap
+ *  binding pre-populated from the chosen lipsync channel. */
+export function defaultStateMapMapping(
   channel: string,
   model: AvatarModel,
 ): BindingMappingStateMap {

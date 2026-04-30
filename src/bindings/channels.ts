@@ -21,6 +21,7 @@ import {
   type KeyboardConfig,
   type MicConfig,
   PHONEMES,
+  VISEMES,
 } from "../types/avatar";
 import { WEBCAM_CHANNELS } from "../inputs/WebcamSource";
 
@@ -62,17 +63,18 @@ export function getKnownChannels(
 ): string[] {
   const builtins: string[] = [];
   if (kind === "visibility") {
-    builtins.push("MicState");
+    builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
-    builtins.push("KeyEvent", "KeyRegion");
+    builtins.push("Viseme", "Lipsync", "KeyEvent", "KeyRegion");
   } else {
     // Continuous numeric channels (suit linear mappings).
     builtins.push("MicVolume", ...WEBCAM_CHANNELS);
-    // Discrete channels (suit stateMap mappings — phoneme/state/region/key
-    // → number lookups).
-    builtins.push("MicState");
+    // Discrete channels (suit stateMap mappings — phoneme/viseme/state/
+    // region/key → number lookups). Lipsync is the recommended default
+    // for sprite-sheet rigs because it combines audio + visual signals.
+    builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
-    builtins.push("KeyEvent", "KeyRegion");
+    builtins.push("Viseme", "Lipsync", "KeyEvent", "KeyRegion");
   }
 
   const userChannels = new Set<string>();
@@ -106,6 +108,13 @@ export function getValuesForChannel(
     }
     case "MicPhoneme":
       return [...PHONEMES];
+    case "Viseme":
+    case "Lipsync":
+      // Lipsync emits values from the viseme vocabulary (phonemes are
+      // mapped through phonemeToViseme in LipsyncSource).
+      return [...VISEMES];
+    case "MouthActive":
+      return ["active"];
     case "KeyRegion": {
       const names = effectiveKeyboard(model)
         .regions.map((r) => r.name.trim())

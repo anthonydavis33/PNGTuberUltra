@@ -3,7 +3,10 @@ import { Plus, RotateCcw, ListChecks } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import { NumberField } from "../components/NumberField";
 import { BindingRow } from "../components/BindingRow";
-import { TransformBindingRow } from "../components/TransformBindingRow";
+import {
+  TransformBindingRow,
+  defaultStateMapMapping,
+} from "../components/TransformBindingRow";
 import { ModifierRow } from "../components/ModifierRow";
 import { ShowOnPopover } from "./ShowOnPopover";
 import { getKnownChannels } from "../bindings/channels";
@@ -96,18 +99,38 @@ export function Properties() {
   };
 
   const addNewTransformBinding = (): void => {
-    const binding: TransformBinding = {
-      id: newBindingId(),
-      target: "scaleY",
-      input: "MicVolume",
-      mapping: {
-        type: "linear",
-        inMin: 0,
-        inMax: 1,
-        outMin: 1,
-        outMax: 1.2,
-      },
-    };
+    // Smart defaults based on the sprite's nature:
+    //   - Sheet sprites: default to `Lipsync → frame` stateMap. Lipsync
+    //     combines audio phonemes (fast vowel transitions during voiced
+    //     speech) with webcam visemes (FV / MBP visual-only shapes) into
+    //     a single best-effort channel — the right default whether the
+    //     user's running mic-only, webcam-only, or both. Auto-populated
+    //     entries are AI/EE/O/U/MBP/FV → 0..5.
+    //   - Non-sheet sprites: classic mic-volume-driven mouth-flap (scaleY
+    //     1.0–1.2) — the prior phase-3b default.
+    let binding: TransformBinding;
+    if (sprite.sheet) {
+      const channel = "Lipsync";
+      binding = {
+        id: newBindingId(),
+        target: "frame",
+        input: channel,
+        mapping: defaultStateMapMapping(channel, model),
+      };
+    } else {
+      binding = {
+        id: newBindingId(),
+        target: "scaleY",
+        input: "MicVolume",
+        mapping: {
+          type: "linear",
+          inMin: 0,
+          inMax: 1,
+          outMin: 1,
+          outMax: 1.2,
+        },
+      };
+    }
     addBinding(sprite.id, binding);
   };
 
@@ -340,7 +363,11 @@ export function Properties() {
             <button
               onClick={addNewTransformBinding}
               className="tool-btn"
-              title="Drive a sprite property (X, Y, rotation, scale, alpha) from a numeric channel like MicVolume"
+              title={
+                sprite.sheet
+                  ? "Drive the sprite-sheet frame from a lipsync channel (defaults to Lipsync → frame state map — combines mic phonemes + webcam visemes)"
+                  : "Drive a sprite property (X, Y, rotation, scale, alpha) from a numeric channel like MicVolume"
+              }
             >
               <Plus size={12} />
               Transform

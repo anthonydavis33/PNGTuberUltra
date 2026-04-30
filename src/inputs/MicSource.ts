@@ -16,20 +16,28 @@
 
 import { inputBus } from "./InputBus";
 import {
+  DEFAULT_MIC_GAIN,
+  MIC_GAIN_MAX,
+  MIC_GAIN_MIN,
   type MicConfig,
   type MicThreshold,
   type Phoneme,
   PHONEMES,
 } from "../types/avatar";
 
-// Reference vowel formants (Hz). Approximate adult English/Japanese values;
-// the classifier picks the nearest in the F1/F2 plane.
+// Reference vowel formants (Hz). Tuned for Japanese vowels (あ/い/う/え/お)
+// — that's the dominant PNGTuber pronunciation pattern, and the Japanese
+// /u/ in particular is meaningfully different from English /u/ (centralized
+// at F2≈1290 vs back-rounded at F2≈800), which keeps O and U from competing
+// for the same audio space. English speakers see slightly degraded /u/
+// accuracy in exchange (English "oo" is centroidally closer to O than U
+// here), but the visual viseme + Lipsync hybrid covers that gap.
 const VOWEL_CENTROIDS: Array<{ name: Phoneme; f1: number; f2: number }> = [
-  { name: "A", f1: 800, f2: 1300 },
-  { name: "I", f1: 320, f2: 2400 },
-  { name: "U", f1: 350, f2: 800 },
-  { name: "E", f1: 500, f2: 2100 },
-  { name: "O", f1: 500, f2: 950 },
+  { name: "A", f1: 770, f2: 1230 },
+  { name: "I", f1: 280, f2: 2230 },
+  { name: "U", f1: 320, f2: 1290 },
+  { name: "E", f1: 480, f2: 1900 },
+  { name: "O", f1: 500, f2: 880 },
 ];
 
 const F1_RANGE: [number, number] = [250, 1100];
@@ -39,18 +47,22 @@ const F2_RANGE: [number, number] = [700, 3000];
 const FORMANT_NOISE_FLOOR_DB = -65;
 
 /**
- * Hysteresis stickiness. To switch from the current phoneme to a different one,
- * the new candidate's distance must be < currentDistance × STICKINESS. Lower
- * value = stickier. 0.7 means new candidate has to be 30% closer than current.
+ * Hysteresis stickiness. To switch from the current phoneme to a different
+ * one, the new candidate's distance must be < currentDistance × STICKINESS.
+ * Lower value = stickier. 0.55 = new candidate must be 45% closer than the
+ * current. This is tight enough that a single noisy frame can't flip the
+ * classification (the classic E↔U / O↔U bounce on Japanese vowels).
  */
-const PHONEME_STICKINESS = 0.7;
+const PHONEME_STICKINESS = 0.55;
 
 /**
  * Minimum time (ms) to stay on a phoneme after switching. Prevents rapid
  * flip-flop on phonemes near a boundary in formant space (O/U is the classic
- * problem case).
+ * problem case). At 120ms the classifier can still keep up with rapid
+ * articulation ("animation" — ~80ms per syllable), but won't oscillate
+ * within a single sustained vowel.
  */
-const PHONEME_MIN_HOLD_MS = 80;
+const PHONEME_MIN_HOLD_MS = 120;
 
 class MicSource {
   private stream: MediaStream | null = null;
@@ -194,8 +206,14 @@ class MicSource {
       sumSq += v * v;
     }
     const rms = Math.sqrt(sumSq / buf.length);
-    // Speaking RMS is typically 0.05–0.3; scale up so 0.5 RMS reads as 1.0.
-    return Math.min(1, rms * 2);
+    // User-tunable gain. Speaking RMS is typically 0.05-0.3 raw; default
+    // gain of 2 reads 0.5 RMS as 1.0 on the meter. Clamped at config-read
+    // time so out-of-band saved values can't destabilize the meter.
+    const gain = Math.max(
+      MIC_GAIN_MIN,
+      Math.min(MIC_GAIN_MAX, this.config.gain ?? DEFAULT_MIC_GAIN),
+    );
+    return Math.min(1, rms * gain);
   }
 
   private computeState(volume: number): string | null {

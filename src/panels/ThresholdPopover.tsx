@@ -6,6 +6,9 @@ import { Trash2, X } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import {
   DEFAULT_MIC_CONFIG,
+  DEFAULT_MIC_GAIN,
+  MIC_GAIN_MAX,
+  MIC_GAIN_MIN,
   type MicThreshold,
 } from "../types/avatar";
 
@@ -86,6 +89,30 @@ export function ThresholdPopover({ onClose }: ThresholdPopoverProps) {
           <X size={14} />
         </button>
       </div>
+
+      <label
+        className="mic-gain-row"
+        title="Multiplier on raw mic RMS before clamping. Crank this up if normal speech reads quietly on the meter — most users land between 2× (loud mics) and 6× (quiet mics)."
+      >
+        <span className="mic-gain-label">
+          Mic Gain
+          <span className="mic-gain-value">
+            {(config.gain ?? DEFAULT_MIC_GAIN).toFixed(1)}×
+          </span>
+        </span>
+        <input
+          type="range"
+          className="mic-gain-slider"
+          min={MIC_GAIN_MIN}
+          max={MIC_GAIN_MAX}
+          step={0.1}
+          value={config.gain ?? DEFAULT_MIC_GAIN}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (Number.isFinite(v)) updateMicConfig({ gain: v });
+          }}
+        />
+      </label>
 
       <label className="phoneme-toggle">
         <input

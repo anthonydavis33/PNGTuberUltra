@@ -20,6 +20,7 @@ import {
 import { getMicSource } from "../inputs/MicSource";
 import { getKeyboardSource } from "../inputs/KeyboardSource";
 import { getWebcamSource } from "../inputs/WebcamSource";
+import { getLipsyncSource } from "../inputs/LipsyncSource";
 import { useAvatar } from "../store/useAvatar";
 import { useInputValue } from "../hooks/useInputValue";
 import { ThresholdPopover } from "./ThresholdPopover";
@@ -43,11 +44,15 @@ export function StatusBar() {
   const [showCamPopover, setShowCamPopover] = useState(false);
 
   // Eager-init the always-on singletons so InputBus has values to read on
-  // first frame. Webcam is start-on-demand only.
+  // first frame. Webcam is start-on-demand only. Lipsync is a derived
+  // source that subscribes to MicPhoneme + Viseme — must construct AFTER
+  // those publish their initial null values, or its initial recompute
+  // sees nothing meaningful.
   useState(() => {
     getMicSource(useAvatar.getState().getMicConfig());
     getKeyboardSource();
     getWebcamSource();
+    getLipsyncSource();
     return null;
   });
 
@@ -65,6 +70,8 @@ export function StatusBar() {
   const eyesClosed = useInputValue<number>("EyesClosed") ?? 0;
   const gazeX = useInputValue<number>("GazeX") ?? 0;
   const gazeY = useInputValue<number>("GazeY") ?? 0;
+  const viseme = useInputValue<string | null>("Viseme");
+  const lipsync = useInputValue<string | null>("Lipsync");
 
   // Keep mic source config in sync with the avatar.
   useEffect(() => {
@@ -301,6 +308,14 @@ export function StatusBar() {
             <span className="status-value">
               <span className="status-label">GazeY</span>
               <span className="status-num">{gazeY.toFixed(2)}</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Vis</span>
+              <span className="status-num">{viseme ?? "—"}</span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Lip</span>
+              <span className="status-num">{lipsync ?? "—"}</span>
             </span>
           </div>
 

@@ -1323,6 +1323,34 @@ body,
   background: rgba(255, 255, 255, 0.05);
 }
 
+.mic-gain-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mic-gain-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.mic-gain-value {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mic-gain-slider {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .phoneme-toggle {
   display: flex;
   align-items: center;

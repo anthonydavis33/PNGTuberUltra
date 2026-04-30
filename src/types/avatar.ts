@@ -271,6 +271,15 @@ export interface MicConfig {
   /** Phoneme detection (formant-based vowel classification) is opt-in per
    *  avatar. When false, MicPhoneme is always null. */
   phonemesEnabled: boolean;
+  /**
+   * Linear multiplier applied to the raw RMS volume before clamping to
+   * [0, 1]. Lets users with quiet mics (or quiet voices) reach the upper
+   * range of the meter without yelling — at 2× a typical speaking voice
+   * peaks around 0.2-0.4; bumping to 4-6× brings that to 0.4-0.8.
+   * Optional for backward compat with saved avatars; defaults to 2 when
+   * absent. Saved values clamped to [0.5, 10] to keep the meter stable.
+   */
+  gain?: number;
 }
 
 export interface MicThreshold {
@@ -302,11 +311,44 @@ export const DEFAULT_MIC_CONFIG: MicConfig = {
     { id: "thr-talking", name: "talking", minVolume: 0.05, holdMs: 150 },
   ],
   phonemesEnabled: false,
+  gain: 2,
 };
+
+/** Allowed gain range — clamped at apply time so out-of-band saved values
+ *  don't blow up the meter. */
+export const MIC_GAIN_MIN = 0.5;
+export const MIC_GAIN_MAX = 10;
+export const DEFAULT_MIC_GAIN = 2;
 
 /** Vowels we detect via formant analysis. */
 export const PHONEMES = ["A", "I", "U", "E", "O"] as const;
 export type Phoneme = (typeof PHONEMES)[number];
+
+/**
+ * Visemes — Preston Blair-style mouth shapes derived from webcam blendshapes.
+ * Wider than vowel phonemes because consonant-cluster shapes (lip closure for
+ * MBP, lip-roll for FV) are visually distinct even when audio formants can't
+ * separate them. The classifier in WebcamSource picks one per frame via a
+ * priority ladder; users stateMap them to sprite-sheet frames the same way
+ * they would MicPhoneme.
+ *
+ * "Rest" represents the engaged-but-neutral pose (camera on / mic running,
+ * user not currently making any active shape). It's distinct from null,
+ * which means the source isn't running at all. This split lets a single-
+ * sprite-sheet rig include a designated rest frame in its stateMap, while
+ * multi-sprite rigs can still use null / MouthActive=null to hide things
+ * when the user is fully disengaged.
+ */
+export const VISEMES = [
+  "Rest",
+  "AI",
+  "EE",
+  "O",
+  "U",
+  "MBP",
+  "FV",
+] as const;
+export type Viseme = (typeof VISEMES)[number];
 
 // Keyboard config -----------------------------------------------------
 
