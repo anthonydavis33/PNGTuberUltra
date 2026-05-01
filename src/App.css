@@ -1449,6 +1449,103 @@ body,
   width: 380px;
 }
 
+/* App-settings popover anchors BELOW the toolbar (which sits at the top
+ * of the window), unlike the mic / webcam popovers above the status bar
+ * which anchor above their gear. Same base styles otherwise. */
+.settings-popover-app {
+  top: calc(100% + 6px);
+  right: 8px;
+  bottom: auto;
+  width: 360px;
+}
+
+.settings-section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.settings-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.settings-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.settings-section-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.settings-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--bg);
+  transition:
+    border-color 0.1s,
+    background 0.1s;
+}
+
+.settings-radio:hover {
+  border-color: var(--accent);
+}
+
+.settings-radio.active {
+  border-color: var(--accent);
+  background: rgba(255, 119, 85, 0.06);
+}
+
+.settings-radio input[type="radio"] {
+  margin: 2px 0 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.settings-radio-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-radio-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-radio-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* Settings gear sits after the phase-status text in the toolbar. The
+ * .toolbar .status before it has margin-left: auto, which right-aligns
+ * the cluster — the gear inherits that placement automatically. */
+
 .keyboard-popover {
   width: 520px;
   max-height: calc(100vh - 100px);
@@ -1959,7 +2056,55 @@ body,
   background: var(--danger);
 }
 
-/* PixiJS host --------------------------------------------------------- */
+/* PixiJS host + zoom indicator ---------------------------------------- */
+.zoom-indicator-stack {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  z-index: 5;
+}
+
+.zoom-indicator {
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background 0.1s,
+    border-color 0.1s,
+    color 0.1s;
+}
+
+.zoom-indicator:hover {
+  background: rgba(0, 0, 0, 0.75);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.zoom-indicator:active {
+  transform: translateY(1px);
+}
+
+.zoom-indicator-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px 7px;
+  border-radius: 3px;
+  user-select: none;
+  pointer-events: none;
+}
+
 .pixi-host {
   width: 100%;
   height: 100%;

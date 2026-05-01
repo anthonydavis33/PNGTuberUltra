@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { PixiApp } from "./pixiApp";
 import { loadFilesAsAssets } from "./assetLoader";
 import { useAvatar } from "../store/useAvatar";
+import { useSettings } from "../store/useSettings";
 import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
 import { getMouseSource } from "../inputs/MouseSource";
 
@@ -22,12 +23,22 @@ export function PixiCanvas() {
   const appRef = useRef<PixiApp | null>(null);
   const dragDepth = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
+  /** Mirror of PixiApp's zoom for rendering the indicator. Synced via
+   *  a RAF poll (see effect below) — robust to React-effect / pixi-init
+   *  race windows where a callback-based subscription would miss events. */
+  const [zoom, setZoom] = useState(1);
+  /** Last zoom value polled from PixiApp. Held in a ref alongside React
+   *  state so the RAF poll can no-op when zoom hasn't changed without
+   *  needing zoom in its dep array (which would re-create the RAF loop
+   *  on every change). */
+  const zoomRef = useRef(1);
 
   const sprites = useAvatar((s) => s.model.sprites);
   const selectedId = useAvatar((s) => s.selectedId);
   const assets = useAvatar((s) => s.assets);
   const registerAsset = useAvatar((s) => s.registerAsset);
   const addSprite = useAvatar((s) => s.addSprite);
+  const wheelZoomMode = useSettings((s) => s.wheelZoomMode);
 
   // Init Pixi once on mount; tear down on unmount.
   useEffect(() => {
@@ -39,6 +50,27 @@ export function PixiCanvas() {
     // rather than in MouseSource itself keeps the input source library-
     // free of React/DOM lookups.
     getMouseSource().setHost(host);
+
+    // Ctrl/Cmd+0 resets viewport to 100% zoom, no pan. Same key combo
+    // VS Code / browsers use for "actual size", so muscle memory
+    // transfers. Skip when focus is on text inputs so the shortcut
+    // doesn't fight with the user typing zero into a NumberField.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key !== "0") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      appRef.current?.resetView();
+    };
+    window.addEventListener("keydown", onKeyDown);
 
     const pixi = new PixiApp();
     let cancelled = false;
@@ -63,10 +95,15 @@ export function PixiCanvas() {
       const state = useAvatar.getState();
       pixi.syncSprites(state.model.sprites, state.assets);
       pixi.setSelectedHighlight(state.selectedId);
+      // Apply current wheel-zoom mode — the dependency-tracked effect
+      // for this fires too early (before pixi.init resolves and
+      // appRef.current gets set), so we push the initial value here.
+      pixi.setWheelZoomMode(useSettings.getState().wheelZoomMode);
     });
 
     return () => {
       cancelled = true;
+      window.removeEventListener("keydown", onKeyDown);
       pixi.destroy();
       appRef.current = null;
       // Drop the host reference so MouseX/Y go null while the canvas
@@ -84,6 +121,39 @@ export function PixiCanvas() {
   useEffect(() => {
     appRef.current?.setSelectedHighlight(selectedId);
   }, [selectedId]);
+
+  // Push wheel-zoom mode changes into Pixi. Effect runs on initial
+  // mount AND when the user changes the setting in the popover, so the
+  // wheel handler always sees the latest mode without needing a
+  // direct subscription inside PixiApp.
+  useEffect(() => {
+    appRef.current?.setWheelZoomMode(wheelZoomMode);
+  }, [wheelZoomMode]);
+
+  // Mirror PixiApp's zoom into React state via RAF poll.
+  //
+  // We use polling rather than a callback subscription because callback
+  // wiring through pixi.init().then() leaves a tiny race window during
+  // which wheel events can fire before the callback is attached, AND in
+  // React StrictMode the double-mount makes that wiring fragile to reason
+  // about. A 16ms RAF poll is cheap (cost = one getZoom() + one
+  // ref-comparison per frame) and the indicator is guaranteed to track
+  // PixiApp's zoom regardless of when wheel events fire relative to the
+  // React effect lifecycle. Only triggers a re-render when the value
+  // actually changes, so the cost in steady state is one number compare.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const z = appRef.current?.getZoom();
+      if (z !== undefined && z !== zoomRef.current) {
+        zoomRef.current = z;
+        setZoom(z);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // ---- Drag-and-drop image import ----------------------------------
   // Tracks nesting depth (drag enters child elements fire dragleave on the
@@ -138,6 +208,25 @@ export function PixiCanvas() {
     }
   };
 
+  // Round to nearest percent for display. Wheel zoom is continuous; the
+  // indicator showing 100.13% is more noise than signal. Click to reset
+  // for parity with Ctrl+0 — a common Figma / Photoshop convention.
+  const zoomPercent = Math.round(zoom * 100);
+  // Hint text adapts to the current wheel mode so users know the gesture
+  // they need without opening the settings popover. Shown as a small
+  // line under the indicator only when zoom is non-default — at 100%
+  // it'd just be UI clutter.
+  const zoomGesture =
+    wheelZoomMode === "ctrl"
+      ? "Ctrl+Wheel"
+      : wheelZoomMode === "always"
+        ? "Wheel"
+        : null;
+  const indicatorTitle =
+    wheelZoomMode === "never"
+      ? "Click to reset to 100% (Ctrl+0). Wheel zoom is disabled in Settings."
+      : `Click to reset to 100% (Ctrl+0). ${zoomGesture} on the canvas to zoom.`;
+
   return (
     <div
       ref={hostRef}
@@ -146,6 +235,23 @@ export function PixiCanvas() {
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
-    />
+    >
+      <div className="zoom-indicator-stack">
+        <button
+          type="button"
+          className="zoom-indicator"
+          onClick={() => appRef.current?.resetView()}
+          title={indicatorTitle}
+          aria-label={`Zoom level ${zoomPercent}%, click to reset`}
+        >
+          {zoomPercent}%
+        </button>
+        {zoomPercent !== 100 && zoomGesture && (
+          <div className="zoom-indicator-hint" aria-hidden="true">
+            {zoomGesture} to zoom
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

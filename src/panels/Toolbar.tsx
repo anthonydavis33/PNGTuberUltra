@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen, Plus, Redo2, Save, Undo2 } from "lucide-react";
+import {
+  FolderOpen,
+  Plus,
+  Redo2,
+  Save,
+  Settings,
+  Sparkles,
+  Undo2,
+} from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { useAvatar } from "../store/useAvatar";
 import { loadFilesAsAssets } from "../canvas/assetLoader";
 import { packAvatar, unpackAvatar } from "../io/pnxr";
+import { buildSampleRig } from "../io/sampleRig";
+import { SettingsPopover } from "./SettingsPopover";
 import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
 import { shortPath } from "../utils/path";
 
@@ -20,6 +30,7 @@ export function Toolbar() {
   const [isLoadingAssets, setLoadingAssets] = useState(false);
   const [isFileBusy, setFileBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const registerAsset = useAvatar((s) => s.registerAsset);
   const addSprite = useAvatar((s) => s.addSprite);
@@ -141,6 +152,36 @@ export function Toolbar() {
       console.error("Save failed:", err);
       flashStatus(
         err instanceof Error ? `Save failed: ${err.message}` : "Save failed",
+      );
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
+  const handleLoadSample = async () => {
+    if (isFileBusy) return;
+    if (
+      isDirty &&
+      !window.confirm(
+        "You have unsaved changes. Load the sample rig anyway?",
+      )
+    ) {
+      return;
+    }
+    setFileBusy(true);
+    try {
+      const { model, assets } = await buildSampleRig();
+      // null filePath — sample is in-memory only until the user explicitly
+      // saves it; matches the "fresh document" semantics the user expects
+      // for a starter rig.
+      loadAvatar(model, assets, null);
+      flashStatus("Loaded sample rig — try typing or speaking");
+    } catch (err) {
+      console.error("Sample rig load failed:", err);
+      flashStatus(
+        err instanceof Error
+          ? `Sample load failed: ${err.message}`
+          : "Sample load failed",
       );
     } finally {
       setFileBusy(false);
@@ -291,6 +332,16 @@ export function Toolbar() {
 
       <button
         className="tool-btn"
+        onClick={handleLoadSample}
+        disabled={isFileBusy}
+        title="Load a sample rig — multi-sprite Bongo Cat-style avatar with regions / bindings / animations pre-wired. Type on letter keys or speak to see it react."
+      >
+        <Sparkles size={14} />
+        Sample
+      </button>
+
+      <button
+        className="tool-btn"
         onClick={handleSave}
         disabled={isFileBusy}
         title={
@@ -323,7 +374,20 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 6b — animations</span>
+      <span className="status">Phase 6c — sample rig</span>
+
+      <button
+        className="tool-btn icon-only toolbar-settings-btn"
+        onClick={() => setShowSettings((v) => !v)}
+        title="Settings — wheel zoom, future preferences"
+        aria-label="Settings"
+      >
+        <Settings size={14} />
+      </button>
+
+      {showSettings && (
+        <SettingsPopover onClose={() => setShowSettings(false)} />
+      )}
     </header>
   );
 }

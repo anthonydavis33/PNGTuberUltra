@@ -1,0 +1,47 @@
+// App-level user settings — persisted across sessions, scoped per
+// machine / browser profile. Distinct from the avatar config that lives
+// in the .pnxr model: settings here apply to all avatars and don't
+// travel when sharing a `.pnxr` file with someone else.
+//
+// We persist via zustand's built-in `persist` middleware writing to
+// localStorage. The Tauri webview has stable localStorage across
+// launches, so this works the same way it would in a regular browser
+// app. If we ever need cross-device sync (likely never for an editor),
+// migrate to the Tauri app config dir.
+
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+
+/** How the canvas should respond to wheel events.
+ *  - "always":  plain wheel zooms (the original 6c-polish behavior).
+ *               Plain wheel does NOT publish to MouseWheel.
+ *  - "ctrl":    Ctrl/Cmd+wheel zooms; plain wheel publishes to the
+ *               MouseWheel bus channel for binding to. New default —
+ *               matches Figma / Photoshop convention and keeps the
+ *               wheel available as a binding source.
+ *  - "never":   wheel never zooms; plain wheel always publishes to
+ *               MouseWheel. Use Ctrl+0 / button to reset zoom; zoom
+ *               via setZoom() programmatically.
+ */
+export type WheelZoomMode = "always" | "ctrl" | "never";
+
+interface SettingsState {
+  wheelZoomMode: WheelZoomMode;
+  setWheelZoomMode: (mode: WheelZoomMode) => void;
+}
+
+export const useSettings = create<SettingsState>()(
+  persist(
+    (set) => ({
+      // "ctrl" by default — leaves wheel available for bindings while
+      // keeping zoom one easy modifier away. Existing users who liked
+      // the old plain-wheel zoom can switch to "always" in the UI.
+      wheelZoomMode: "ctrl",
+      setWheelZoomMode: (mode) => set({ wheelZoomMode: mode }),
+    }),
+    {
+      // Versioned key so future schema bumps can migrate cleanly.
+      name: "pngtuber-ultra-settings-v1",
+    },
+  ),
+);

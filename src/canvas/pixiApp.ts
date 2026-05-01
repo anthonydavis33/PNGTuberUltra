@@ -26,6 +26,8 @@ import {
 } from "../bindings/evaluate";
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
 import { AnimationRunner } from "../animations/runner";
+import { getMouseSource } from "../inputs/MouseSource";
+import type { WheelZoomMode } from "../store/useSettings";
 import {
   computeCurrentFrame,
   sliceSheet,
@@ -66,15 +68,34 @@ export class PixiApp {
   private windowPointerUpHandler: ((e: PointerEvent) => void) | null = null;
   private host: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  /** Bound wheel handler — kept as a field so we can removeEventListener
+   *  symmetrically on destroy. */
+  private wheelHandler: ((e: WheelEvent) => void) | null = null;
   private readonly animationRunner = new AnimationRunner();
   private readonly modifierRunner = new ModifierRunner();
   /** Wallclock time of the previous tick (in seconds), for dt computation. */
   private lastTickTime: number | null = null;
+  /** Viewport zoom factor (1 = 100%). Multiplies world + overlays. Drag
+   *  deltas divide by this so screen-pixel drags produce sensible
+   *  world-unit moves regardless of zoom. Session-only — not persisted. */
+  private zoom = 1;
+  /** Pixel offset applied on top of canvas-center when positioning the
+   *  world. Reserved for future pan support; for now, only the zoom
+   *  cursor-anchor math touches this so zoom-toward-cursor stays
+   *  visually correct. */
+  private pan = { x: 0, y: 0 };
+  /** How wheel events are interpreted. Updated from the React layer
+   *  whenever the user changes the setting in the Settings popover.
+   *  Default "ctrl" matches the Settings store's default. */
+  private wheelZoomMode: WheelZoomMode = "ctrl";
 
   /** Wired by the React mount component. */
   onSelect?: (id: string | null) => void;
   /** Reports incremental drag deltas in canvas pixels. */
   onDrag?: (id: string, dx: number, dy: number) => void;
+  /** Called whenever zoom changes (wheel input or programmatic reset).
+   *  React mount uses this to drive the on-screen zoom indicator. */
+  onZoomChange?: (zoom: number) => void;
 
   async init(host: HTMLElement): Promise<void> {
     this.host = host;
@@ -111,6 +132,7 @@ export class PixiApp {
     this.resizeObserver.observe(host);
 
     this.setupStageInteraction();
+    this.setupWheelZoom();
 
     // Per-frame: evaluate bindings against the current bus state, push results
     // to PixiSprite properties. This is what makes the avatar respond to mic /
@@ -127,6 +149,10 @@ export class PixiApp {
     if (this.windowPointerUpHandler) {
       window.removeEventListener("pointerup", this.windowPointerUpHandler);
       this.windowPointerUpHandler = null;
+    }
+    if (this.wheelHandler && this.host) {
+      this.host.removeEventListener("wheel", this.wheelHandler);
+      this.wheelHandler = null;
     }
     if (this.app.ticker) {
       this.app.ticker.remove(this.tickBindings);
@@ -198,8 +224,17 @@ export class PixiApp {
 
   setSelectedHighlight(selectedId: string | null): void {
     if (this.destroyed) return;
+    // When nothing is selected, don't dim anyone — the dim-others
+    // behavior is meant to highlight the active sprite, and there's no
+    // active sprite to highlight when selectedId is null. Otherwise
+    // the canvas reads as "everything is muted for some reason"
+    // whenever the user clicks empty stage to deselect.
     for (const [id, sprite] of this.spriteMap) {
-      sprite.tint = id === selectedId ? 0xffffff : 0x999999;
+      if (selectedId === null) {
+        sprite.tint = 0xffffff;
+      } else {
+        sprite.tint = id === selectedId ? 0xffffff : 0x999999;
+      }
     }
   }
 
@@ -207,13 +242,136 @@ export class PixiApp {
     // Read from host directly — guaranteed up-to-date after layout, unlike
     // app.screen which depends on Pixi's own resize plugin running first.
     if (!this.host) return;
-    this.world.x = this.host.clientWidth / 2;
-    this.world.y = this.host.clientHeight / 2;
-    // Overlays must track world's centering so overlay coords match sprite
-    // world coords 1:1.
+    const cx = this.host.clientWidth / 2;
+    const cy = this.host.clientHeight / 2;
+    // World position = canvas center + user pan offset. Overlays match
+    // exactly so the anchor crosshair (in overlays, addressed in world
+    // coords) stays glued to the sprite it's marking through zoom + pan.
+    this.world.x = cx + this.pan.x;
+    this.world.y = cy + this.pan.y;
+    this.world.scale.set(this.zoom);
     this.overlays.x = this.world.x;
     this.overlays.y = this.world.y;
+    this.overlays.scale.set(this.zoom);
   };
+
+  /** Min / max zoom bounds. 0.1× covers "I lost my avatar, where is it",
+   *  10× covers "I'm tweaking 1px alignment on a tiny detail." */
+  static readonly MIN_ZOOM = 0.1;
+  static readonly MAX_ZOOM = 10;
+
+  /**
+   * Set zoom factor, optionally anchored to a screen-space point. The
+   * anchor is the screen pixel that should stay under the same world
+   * point through the zoom — i.e. zooming toward the cursor.
+   *
+   * Math: a screen-space anchor A maps to world-space point P via
+   * P = (A - W) / S, where W is world position and S is scale. After
+   * the zoom we want P still under A, so the new world position is
+   * W' = A - P × S' = A - (A - W) × (S' / S). The pan offset stores
+   * the post-centering delta, so we pull centerOffset back out at the
+   * end.
+   */
+  setZoom(targetZoom: number, anchorScreenX?: number, anchorScreenY?: number): void {
+    if (!this.host) return;
+    const clamped = Math.max(
+      PixiApp.MIN_ZOOM,
+      Math.min(PixiApp.MAX_ZOOM, targetZoom),
+    );
+    if (clamped === this.zoom) return;
+
+    const cx = this.host.clientWidth / 2;
+    const cy = this.host.clientHeight / 2;
+    const ax = anchorScreenX ?? cx;
+    const ay = anchorScreenY ?? cy;
+
+    const ratio = clamped / this.zoom;
+    const oldWorldX = cx + this.pan.x;
+    const oldWorldY = cy + this.pan.y;
+    const newWorldX = ax - (ax - oldWorldX) * ratio;
+    const newWorldY = ay - (ay - oldWorldY) * ratio;
+
+    this.zoom = clamped;
+    this.pan = { x: newWorldX - cx, y: newWorldY - cy };
+    this.recenterWorld();
+    this.onZoomChange?.(this.zoom);
+  }
+
+  /** Reset zoom to 100% and clear pan offset. */
+  resetView(): void {
+    if (this.zoom === 1 && this.pan.x === 0 && this.pan.y === 0) return;
+    this.zoom = 1;
+    this.pan = { x: 0, y: 0 };
+    this.recenterWorld();
+    this.onZoomChange?.(this.zoom);
+  }
+
+  /** Current zoom factor. Used by UI affordances (status indicators,
+   *  hotkey shortcuts) and external callers like reset gestures. */
+  getZoom(): number {
+    return this.zoom;
+  }
+
+  /** Set how wheel events are interpreted. PixiCanvas pushes the
+   *  current value from the settings store and updates whenever it
+   *  changes, so the wheel handler always sees the latest mode without
+   *  having to subscribe directly. */
+  setWheelZoomMode(mode: WheelZoomMode): void {
+    this.wheelZoomMode = mode;
+  }
+
+  private setupWheelZoom(): void {
+    if (!this.host) return;
+    this.wheelHandler = (e: WheelEvent): void => {
+      // Skip if the event target is something inside the host that
+      // wants its own scroll (e.g. a future scrollable popover landing
+      // inside the canvas). The host's only child today is Pixi's
+      // <canvas>, so this is mostly defensive.
+      const target = e.target as HTMLElement | null;
+      if (target && target !== this.host && target.tagName !== "CANVAS") {
+        return;
+      }
+
+      // Wheel routing per user setting. Three modes:
+      //   "always":  any wheel zooms; never publishes to MouseWheel
+      //              (matches the original 6c-polish behavior).
+      //   "ctrl":    Ctrl/Cmd+wheel zooms; plain wheel publishes to
+      //              MouseWheel for binding consumers (default).
+      //   "never":   wheel never zooms; always publishes to MouseWheel.
+      const mode = this.wheelZoomMode;
+      const ctrlHeld = e.ctrlKey || e.metaKey;
+      const shouldZoom =
+        mode === "always" ||
+        (mode === "ctrl" && ctrlHeld);
+      const shouldPublishWheel =
+        mode === "never" ||
+        (mode === "ctrl" && !ctrlHeld);
+
+      // Always preventDefault on wheel events over the canvas — the
+      // editor doesn't have any native scrolling there to preserve, and
+      // letting plain wheel scroll the document while the cursor is on
+      // the canvas would feel broken regardless of mode.
+      e.preventDefault();
+
+      if (shouldZoom) {
+        const rect = this.host!.getBoundingClientRect();
+        const screenX = e.clientX - rect.left;
+        const screenY = e.clientY - rect.top;
+        // Exponential zoom feel — each "tick" of wheel multiplies the
+        // current zoom by a constant factor. deltaY > 0 = scroll-down
+        // = zoom out, so we negate. The 0.001 multiplier tunes the
+        // rate empirically: typical mouse wheel deltaY of ~100 gives
+        // factor ≈ 0.905 (~10% zoom-out per tick).
+        const factor = Math.exp(-e.deltaY * 0.001);
+        this.setZoom(this.zoom * factor, screenX, screenY);
+      }
+
+      if (shouldPublishWheel) {
+        getMouseSource().publishWheel(e.deltaY);
+      }
+    };
+    this.host.addEventListener("wheel", this.wheelHandler, { passive: false });
+  }
 
   private tickBindings = (): void => {
     if (this.destroyed) return;
@@ -321,8 +479,13 @@ export class PixiApp {
     // `globalpointermove` fires on every move regardless of hit-test.
     this.app.stage.on("globalpointermove", (e: FederatedPointerEvent) => {
       if (!this.dragState) return;
-      const dx = e.global.x - this.dragState.lastX;
-      const dy = e.global.y - this.dragState.lastY;
+      // Screen-pixel deltas divided by zoom give sensible world-unit
+      // moves: drag 100 screen px at 5× zoom = sprite shifts 20 world
+      // units, which is the visible 100 px the user just dragged
+      // because the world is rendered at 5× scale. Without this, drags
+      // at high zoom feel sluggish; at low zoom they overshoot.
+      const dx = (e.global.x - this.dragState.lastX) / this.zoom;
+      const dy = (e.global.y - this.dragState.lastY) / this.zoom;
       this.dragState.lastX = e.global.x;
       this.dragState.lastY = e.global.y;
       this.onDrag?.(this.dragState.id, dx, dy);

@@ -15,6 +15,12 @@
 //   MouseInside  — boolean, true while the cursor is over the canvas.
 //     Useful for "show this sprite when the user is looking at the
 //     canvas" type rigs.
+//   MouseWheel   — number, signed wheel delta on each scroll event.
+//     Negative = scroll up, positive = scroll down (matches DOM's
+//     deltaY convention). Auto-clears to 0 after MOUSEWHEEL_CLEAR_MS
+//     so bindings see a clean impulse instead of a sticky last value.
+//     Pair with a Spring or Drag modifier to integrate the impulse
+//     into a continuous-feel rotation / position over time.
 //
 // All channels publish null until the source has both a host element and
 // a real mouse event — keeps transform bindings from firing with stale
@@ -29,7 +35,14 @@ export const MOUSE_CHANNELS = [
   "MouseRight",
   "MouseMiddle",
   "MouseInside",
+  "MouseWheel",
 ] as const;
+
+/** How long after a wheel event MouseWheel auto-clears to 0. Long enough
+ *  that bindings reliably see the impulse for a frame or two; short
+ *  enough that holding zoom doesn't leave the binding "stuck" between
+ *  scroll ticks. */
+const MOUSEWHEEL_CLEAR_MS = 80;
 
 class MouseSource {
   /** Element used for canvas-relative coord normalization. PixiCanvas
@@ -41,6 +54,10 @@ class MouseSource {
    *  Lets us hold MouseX / MouseY at null until there's a real position
    *  to publish — avoids transform bindings firing on a stale (0, 0). */
   private hasMoved = false;
+  /** Pending auto-clear timer for MouseWheel. Cancelled and reset on
+   *  each new wheel event so a continuous scroll publishes a stream of
+   *  impulses without ever clearing prematurely. */
+  private wheelClearTimer: number | null = null;
 
   constructor() {
     for (const c of MOUSE_CHANNELS) inputBus.publish(c, null);
@@ -72,6 +89,10 @@ class MouseSource {
     window.removeEventListener("mousedown", this.onDown);
     window.removeEventListener("mouseup", this.onUp);
     window.removeEventListener("blur", this.onBlur);
+    if (this.wheelClearTimer !== null) {
+      window.clearTimeout(this.wheelClearTimer);
+      this.wheelClearTimer = null;
+    }
     this.host = null;
     this.hasMoved = false;
     this.buttons = { left: false, middle: false, right: false };
@@ -134,6 +155,24 @@ class MouseSource {
       inputBus.publish("MouseRight", false);
     }
   };
+
+  /**
+   * Publish a wheel impulse. Called by the canvas's wheel handler when
+   * the wheel event should feed bindings rather than zoom (i.e. when
+   * the user's wheelZoomMode setting routes plain wheel here). The
+   * impulse auto-clears to 0 after MOUSEWHEEL_CLEAR_MS so transform
+   * bindings see a clean spike, not a sticky last value.
+   */
+  publishWheel(deltaY: number): void {
+    inputBus.publish("MouseWheel", deltaY);
+    if (this.wheelClearTimer !== null) {
+      window.clearTimeout(this.wheelClearTimer);
+    }
+    this.wheelClearTimer = window.setTimeout(() => {
+      inputBus.publish("MouseWheel", 0);
+      this.wheelClearTimer = null;
+    }, MOUSEWHEEL_CLEAR_MS);
+  }
 
   private onBlur = (): void => {
     // Lost focus — assume any held buttons released.

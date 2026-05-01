@@ -25,9 +25,11 @@ import {
 } from "../types/avatar";
 import { WEBCAM_CHANNELS } from "../inputs/WebcamSource";
 
-/** Mouse channels that publish numbers (MouseX/Y) — go in the transform
- *  picker as continuous inputs. */
-const MOUSE_CONTINUOUS_CHANNELS = ["MouseX", "MouseY"] as const;
+/** Mouse channels that publish numbers (MouseX/Y, MouseWheel) — go in
+ *  the transform picker as continuous inputs. MouseWheel impulses are
+ *  best paired with a Spring or Drag modifier downstream, since the
+ *  raw signal is a brief spike. */
+const MOUSE_CONTINUOUS_CHANNELS = ["MouseX", "MouseY", "MouseWheel"] as const;
 /** Mouse channels that publish booleans — useful in both visibility
  *  (Show On = true / false) and transform (coerces to 0/1) bindings. */
 const MOUSE_BOOLEAN_CHANNELS = [
