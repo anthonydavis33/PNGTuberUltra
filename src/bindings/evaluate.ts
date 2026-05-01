@@ -226,6 +226,14 @@ export function evaluatePoseProgress(b: PoseBinding): number {
  * HeadPitch-driven head-tilt and HeadYaw-driven head-turn compose
  * cleanly without needing to coordinate ranges).
  *
+ * Pivot semantics: when a pose binding has a non-zero pivot AND a
+ * non-zero scale/rotation contribution, we add a compensating
+ * translation so the pivot point stays put. Without compensation, a
+ * `ScaleY: 0.2` pose stretches the sprite equally above and below the
+ * anchor; with `pivot.y = +60` (offset 60px below anchor), the
+ * compensation translates the sprite so the chin stays still and only
+ * the crown rises — the natural "head leaning forward" effect.
+ *
  * Returned offsets feed into the same pipeline slot as animation tween
  * offsets — added to base + transform-binding overrides BEFORE
  * modifiers run, so springs / drag still smooth the combined target.
@@ -237,11 +245,84 @@ export function applyPoseBindings(sprite: Sprite): Partial<Transform> {
     const progress = evaluatePoseProgress(b);
     if (progress === 0) continue;
 
+    // Per-property additive contribution (pose × progress).
+    let dx = 0;
+    let dy = 0;
+    let dRot = 0;
+    let dScaleX = 0;
+    let dScaleY = 0;
+    let dAlpha = 0;
+    let dFrame = 0;
+
     for (const key of Object.keys(b.pose) as (keyof Transform)[]) {
       const v = b.pose[key];
       if (typeof v !== "number") continue;
-      offsets[key] = (offsets[key] ?? 0) + v * progress;
+      const contribution = v * progress;
+      switch (key) {
+        case "x":
+          dx += contribution;
+          break;
+        case "y":
+          dy += contribution;
+          break;
+        case "rotation":
+          dRot += contribution;
+          break;
+        case "scaleX":
+          dScaleX += contribution;
+          break;
+        case "scaleY":
+          dScaleY += contribution;
+          break;
+      }
+      // Note: alpha and frame aren't valid Transform keys (Transform
+      // only has x/y/rotation/scaleX/scaleY) — these branches are
+      // here only because Object.keys typing is permissive. They
+      // never fire in practice since b.pose is Partial<Transform>.
+      void dAlpha;
+      void dFrame;
     }
+
+    // Pivot compensation: if this pose contributes scale or rotation
+    // AND a non-default pivot is set, compute the translation that
+    // keeps the pivot stationary through the transform.
+    //
+    // The pivot is in sprite-local coords (offset from anchor). The
+    // scale/rotate around the anchor moves the pivot by some amount;
+    // we need to translate the sprite by the negative of that motion
+    // to cancel it out, restoring the pivot's position.
+    //
+    // Math (treating each pose binding's contribution as additive on
+    // top of base scale=1, rotation=0): scaling by (1+dScaleX) around
+    // the anchor moves a point at (px, 0) to ((1+dScaleX)·px, 0). The
+    // delta is dScaleX·px in X. Rotating by dRot around the anchor
+    // moves (px, py) to (px·cos - py·sin, px·sin + py·cos); the delta
+    // is (px·(cos-1) - py·sin, px·sin + py·(cos-1)).
+    //
+    // We negate to get the compensating translation.
+    const pivot = b.pivot;
+    if (pivot && (dScaleX !== 0 || dScaleY !== 0 || dRot !== 0)) {
+      const px = pivot.x;
+      const py = pivot.y;
+      // Scale compensation.
+      dx -= px * dScaleX;
+      dy -= py * dScaleY;
+      // Rotation compensation. Treat dRot as a small additive rotation
+      // applied on top of base rotation=0.
+      if (dRot !== 0) {
+        const radians = (dRot * Math.PI) / 180;
+        const cos = Math.cos(radians);
+        const sin = Math.sin(radians);
+        dx -= px * (cos - 1) - py * sin;
+        dy -= px * sin + py * (cos - 1);
+      }
+    }
+
+    if (dx !== 0) offsets.x = (offsets.x ?? 0) + dx;
+    if (dy !== 0) offsets.y = (offsets.y ?? 0) + dy;
+    if (dRot !== 0) offsets.rotation = (offsets.rotation ?? 0) + dRot;
+    if (dScaleX !== 0) offsets.scaleX = (offsets.scaleX ?? 0) + dScaleX;
+    if (dScaleY !== 0) offsets.scaleY = (offsets.scaleY ?? 0) + dScaleY;
   }
   return offsets;
 }

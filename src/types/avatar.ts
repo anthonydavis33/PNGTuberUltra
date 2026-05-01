@@ -243,6 +243,30 @@ export interface PoseBinding {
    * tween body's `targets` field. Properties not listed have no offset.
    */
   pose: Partial<Transform>;
+  /**
+   * Optional pivot point for scale + rotation within this pose,
+   * expressed as a pixel offset from the sprite's anchor (same units
+   * and orientation as `transform.x` / `transform.y`).
+   *
+   * What this gets you: scaling / rotating "around" a non-anchor point
+   * without baking the offset into the asset. The classic example is a
+   * head sprite anchored at center — a `ScaleY: +0.2` pose with no
+   * pivot stretches the head equally up AND down, which reads as the
+   * head inflating. Setting `pivot: { x: 0, y: 60 }` (i.e. 60px below
+   * the sprite anchor — at the chin) makes the same scale operation
+   * keep the chin in place and stretch ONLY upward, which reads as the
+   * head leaning forward toward the camera.
+   *
+   * The runtime computes a compensating translation each frame
+   * (translate so pivot is at origin → scale/rotate → translate back)
+   * and folds that translation into the pose's x/y output. The
+   * compensation only fires when the pose has non-zero scaleX /
+   * scaleY / rotation; pure x/y poses (no scale or rotation) ignore
+   * the pivot entirely.
+   *
+   * Defaults to (0, 0) — at the sprite anchor — when omitted.
+   */
+  pivot?: { x: number; y: number };
 }
 
 export type Binding = VisibilityBinding | TransformBinding | PoseBinding;

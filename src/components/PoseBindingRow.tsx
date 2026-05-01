@@ -14,7 +14,7 @@
 // Free-transform-box editor lands in 8c — for now this is text-field
 // editing, same shape as the AnimationRow's tween-target editor.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { NumberField } from "./NumberField";
 import {
@@ -167,6 +167,90 @@ export function PoseBindingRow({
           );
         })}
       </div>
+
+      <PivotEditor binding={binding} onChange={onChange} />
     </li>
+  );
+}
+
+/**
+ * Pivot editor — collapsed by default since most poses don't need a
+ * custom pivot. Expands on click. When expanded, two number inputs +
+ * a "Reset to anchor" link. Compensation only applies when scale or
+ * rotation pose targets are set, so we surface that in the hint to
+ * avoid confusion ("I set pivot but nothing changed" — yeah, because
+ * your pose has no scale or rotation in it).
+ */
+interface PivotEditorProps {
+  binding: PoseBinding;
+  onChange: (patch: Partial<PoseBinding>) => void;
+}
+
+function PivotEditor({ binding, onChange }: PivotEditorProps) {
+  const pivot = binding.pivot;
+  const hasPivot = pivot !== undefined && (pivot.x !== 0 || pivot.y !== 0);
+  const hasScaleOrRotation =
+    typeof binding.pose.scaleX === "number" ||
+    typeof binding.pose.scaleY === "number" ||
+    typeof binding.pose.rotation === "number";
+
+  const [expanded, setExpanded] = useState(hasPivot);
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className="pose-binding-pivot-toggle"
+        onClick={() => setExpanded(true)}
+        title="Set a custom pivot point so scale and rotation in this pose swing around an offset point (e.g. chin-anchored ScaleY for natural head-lean) instead of the sprite's anchor."
+      >
+        + Pivot {hasPivot ? `(${pivot!.x}, ${pivot!.y})` : ""}
+      </button>
+    );
+  }
+
+  const updatePivot = (patch: Partial<{ x: number; y: number }>): void => {
+    const current = pivot ?? { x: 0, y: 0 };
+    onChange({ pivot: { ...current, ...patch } });
+  };
+
+  const resetPivot = (): void => {
+    onChange({ pivot: undefined });
+    setExpanded(false);
+  };
+
+  return (
+    <div className="pose-binding-pivot">
+      <div className="pose-binding-pivot-row">
+        <span className="pose-binding-pivot-label">Pivot</span>
+        <NumberField
+          label="X"
+          value={pivot?.x ?? 0}
+          onChange={(v) => updatePivot({ x: v })}
+          step={1}
+          precision={0}
+        />
+        <NumberField
+          label="Y"
+          value={pivot?.y ?? 0}
+          onChange={(v) => updatePivot({ y: v })}
+          step={1}
+          precision={0}
+        />
+        <button
+          type="button"
+          className="pose-binding-pivot-reset"
+          onClick={resetPivot}
+          title="Clear pivot back to the sprite's anchor."
+        >
+          Reset
+        </button>
+      </div>
+      <div className="pose-binding-pivot-hint">
+        {hasScaleOrRotation
+          ? "Pixel offset from sprite anchor. Scale + rotation in this pose pivot around this point. (X right, Y down.)"
+          : "Pivot only affects scale or rotation pose targets — none are set on this binding yet, so changes here won't be visible until you enable Rot, ScX, or ScY above."}
+      </div>
+    </div>
   );
 }

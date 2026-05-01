@@ -710,6 +710,74 @@ body,
   color: var(--text);
 }
 
+/* Pivot editor — collapsed by default to keep the row compact. */
+.pose-binding-pivot-toggle {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.pose-binding-pivot-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.pose-binding-pivot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.pose-binding-pivot-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pose-binding-pivot-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.pose-binding-pivot-reset {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.pose-binding-pivot-reset:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.pose-binding-pivot-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
 .pose-binding-row .number-field {
   display: inline-flex;
   align-items: center;
