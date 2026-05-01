@@ -10,6 +10,7 @@ import { PixiApp } from "./pixiApp";
 import { loadFilesAsAssets } from "./assetLoader";
 import { useAvatar } from "../store/useAvatar";
 import { useSettings } from "../store/useSettings";
+import { useEditor } from "../store/useEditor";
 import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
 import { getMouseSource } from "../inputs/MouseSource";
 
@@ -39,6 +40,7 @@ export function PixiCanvas() {
   const registerAsset = useAvatar((s) => s.registerAsset);
   const addSprite = useAvatar((s) => s.addSprite);
   const wheelZoomMode = useSettings((s) => s.wheelZoomMode);
+  const activePoseBinding = useEditor((s) => s.activePoseBinding);
 
   // Init Pixi once on mount; tear down on unmount.
   useEffect(() => {
@@ -90,15 +92,31 @@ export function PixiCanvas() {
           y: current.transform.y + dy,
         });
       };
+      // Pivot drag: update the binding's pivot via updateBinding. We
+      // resolve the current pivot at dispatch time (not at callback-
+      // construction time) because pixi keeps the binding id stable
+      // across updates while binding contents change every drag tick.
+      pixi.onPivotDrag = (spriteId, bindingId, dx, dy) => {
+        const state = useAvatar.getState();
+        const sprite = state.model.sprites.find((s) => s.id === spriteId);
+        const binding = sprite?.bindings.find((b) => b.id === bindingId);
+        if (!binding || binding.target !== "pose") return;
+        const current = binding.pivot ?? { x: 0, y: 0 };
+        state.updateBinding(spriteId, bindingId, {
+          pivot: { x: current.x + dx, y: current.y + dy },
+        });
+      };
 
       // Initial sync with current store state.
       const state = useAvatar.getState();
       pixi.syncSprites(state.model.sprites, state.assets);
       pixi.setSelectedHighlight(state.selectedId);
-      // Apply current wheel-zoom mode — the dependency-tracked effect
-      // for this fires too early (before pixi.init resolves and
-      // appRef.current gets set), so we push the initial value here.
+      // Apply current wheel-zoom mode + initial active pose binding —
+      // the dependency-tracked effects for these fire too early
+      // (before pixi.init resolves and appRef.current gets set), so we
+      // push the initial values here.
       pixi.setWheelZoomMode(useSettings.getState().wheelZoomMode);
+      pixi.setPivotEditTarget(useEditor.getState().activePoseBinding);
     });
 
     return () => {
@@ -129,6 +147,14 @@ export function PixiCanvas() {
   useEffect(() => {
     appRef.current?.setWheelZoomMode(wheelZoomMode);
   }, [wheelZoomMode]);
+
+  // Push active-pose-binding changes (the pivot dot's edit target)
+  // into Pixi. The toggle button on a PoseBindingRow updates the
+  // useEditor store; this effect mirrors that into PixiApp so the
+  // dot appears/hides + tracks the right binding.
+  useEffect(() => {
+    appRef.current?.setPivotEditTarget(activePoseBinding);
+  }, [activePoseBinding]);
 
   // Mirror PixiApp's zoom into React state via RAF poll.
   //

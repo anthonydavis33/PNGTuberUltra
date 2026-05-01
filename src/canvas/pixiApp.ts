@@ -45,6 +45,20 @@ export class PixiApp {
    *  block interaction with sprites underneath. */
   private readonly overlays: Container = new Container();
   private anchorDot: Graphics | null = null;
+  /** Draggable pivot indicator for the active pose-binding edit target.
+   *  Visible only when setPivotEditTarget has been called with non-null
+   *  args; hidden otherwise. Distinct from the anchorDot (which marks
+   *  the SELECTED SPRITE'S anchor non-interactively) in both color
+   *  scheme and behavior — pivotDot accepts pointer events. */
+  private pivotDot: Graphics | null = null;
+  /** Currently-edited pose binding's identifier. Tracked so the per-tick
+   *  positioning code can find the right sprite + binding to mirror.
+   *  Null = no pivot dot rendered. */
+  private pivotEditTarget: { spriteId: string; bindingId: string } | null =
+    null;
+  /** Drag state for the pivot dot — independent from the sprite drag
+   *  state since the deltas dispatch to a different store action. */
+  private pivotDragState: { spriteId: string; bindingId: string; lastX: number; lastY: number } | null = null;
   private readonly spriteMap = new Map<string, PixiSprite>();
   /** Tracks which assetId each Pixi sprite is currently rendering, so we can
    *  detect mid-life asset swaps and re-texture instead of leaking placeholders. */
@@ -116,6 +130,10 @@ export class PixiApp {
   /** Called whenever zoom changes (wheel input or programmatic reset).
    *  React mount uses this to drive the on-screen zoom indicator. */
   onZoomChange?: (zoom: number) => void;
+  /** Reports incremental pivot-drag deltas (in world units) for the
+   *  active pose binding. PixiCanvas dispatches these to the avatar
+   *  store, updating `binding.pivot.x/y`. */
+  onPivotDrag?: (spriteId: string, bindingId: string, dx: number, dy: number) => void;
 
   async init(host: HTMLElement): Promise<void> {
     this.host = host;
@@ -138,11 +156,23 @@ export class PixiApp {
 
     this.app.stage.addChild(this.world);
     this.app.stage.addChild(this.overlays);
-    this.overlays.eventMode = "none";
+    // "passive" instead of "none" — overlays as a whole still doesn't
+    // trigger pointer events, but children can opt in via their own
+    // eventMode. This lets the pivotDot accept pointer events while
+    // anchorDot stays passive.
+    this.overlays.eventMode = "passive";
 
     this.anchorDot = createAnchorDot();
     this.anchorDot.visible = false;
     this.overlays.addChild(this.anchorDot);
+
+    this.pivotDot = createPivotDot();
+    this.pivotDot.visible = false;
+    this.pivotDot.eventMode = "static";
+    this.pivotDot.cursor = "grab";
+    this.pivotDot.on("pointerdown", this.onPivotPointerDown);
+    this.overlays.addChild(this.pivotDot);
+
     this.recenterWorld();
 
     // Pixi v8's renderer doesn't reliably emit a 'resize' event we can hook,
@@ -392,6 +422,37 @@ export class PixiApp {
     this.wheelZoomMode = mode;
   }
 
+  /** Mark a specific pose binding as actively being edited via canvas
+   *  handles. The pivot dot becomes visible and draggable; on the next
+   *  tick its position mirrors `<sprite world pos> + <binding.pivot>`.
+   *  Pass `null` to hide and disable the dot. PixiCanvas calls this
+   *  in response to the useEditor store's activePoseBinding changing. */
+  setPivotEditTarget(target: { spriteId: string; bindingId: string } | null): void {
+    this.pivotEditTarget = target;
+    if (this.pivotDot) {
+      this.pivotDot.visible = target !== null;
+    }
+    // If we're clearing while a drag is in progress, abort it cleanly
+    // so we don't keep dispatching deltas to a binding nobody's
+    // editing anymore.
+    if (target === null) {
+      this.pivotDragState = null;
+      if (this.pivotDot) this.pivotDot.cursor = "grab";
+    }
+  }
+
+  private onPivotPointerDown = (e: FederatedPointerEvent): void => {
+    if (!this.pivotEditTarget) return;
+    e.stopPropagation();
+    this.pivotDragState = {
+      spriteId: this.pivotEditTarget.spriteId,
+      bindingId: this.pivotEditTarget.bindingId,
+      lastX: e.global.x,
+      lastY: e.global.y,
+    };
+    if (this.pivotDot) this.pivotDot.cursor = "grabbing";
+  };
+
   private setupWheelZoom(): void {
     if (!this.host) return;
     this.wheelHandler = (e: WheelEvent): void => {
@@ -566,6 +627,44 @@ export class PixiApp {
         this.anchorDot.visible = false;
       }
     }
+
+    // Pivot dot — render at <sprite world pos> + <binding.pivot>.
+    // Approximation: doesn't account for the sprite's rotation/scale,
+    // so the dot's screen position is straightforward (drag-right
+    // moves pivot.x, drag-down moves pivot.y) regardless of how the
+    // sprite is currently transformed. That's intuitive even though
+    // it doesn't match where Pixi will actually pivot the rotation
+    // through the sprite's own rotation. Worth it for the UX.
+    if (this.pivotDot && this.pivotEditTarget) {
+      const target = this.pivotEditTarget;
+      const ms = sprites.find((s) => s.id === target.spriteId);
+      const binding = ms?.bindings.find((b) => b.id === target.bindingId);
+      const targetTransform =
+        ms?.id === selectedId
+          ? selectedTransform
+          : ms
+            ? this.modifierRunner.evaluate(ms, sprites, dt, now)
+            : null;
+      if (
+        ms &&
+        binding &&
+        binding.target === "pose" &&
+        targetTransform
+      ) {
+        const pivot = "pivot" in binding ? binding.pivot : undefined;
+        const px = pivot?.x ?? 0;
+        const py = pivot?.y ?? 0;
+        this.pivotDot.x = targetTransform.x + px;
+        this.pivotDot.y = targetTransform.y + py;
+        this.pivotDot.visible = true;
+      } else {
+        // Target points at something that no longer exists (sprite or
+        // binding deleted while edit mode was on).
+        this.pivotDot.visible = false;
+      }
+    } else if (this.pivotDot) {
+      this.pivotDot.visible = false;
+    }
   };
 
   private setupStageInteraction(): void {
@@ -574,28 +673,47 @@ export class PixiApp {
 
     // Pixi v8: `pointermove` no longer bubbles past interactive children.
     // `globalpointermove` fires on every move regardless of hit-test.
+    // Handles both sprite drags AND pivot-dot drags (separate states
+    // since they dispatch to different callbacks).
     this.app.stage.on("globalpointermove", (e: FederatedPointerEvent) => {
-      if (!this.dragState) return;
       // Screen-pixel deltas divided by zoom give sensible world-unit
       // moves: drag 100 screen px at 5× zoom = sprite shifts 20 world
       // units, which is the visible 100 px the user just dragged
       // because the world is rendered at 5× scale. Without this, drags
       // at high zoom feel sluggish; at low zoom they overshoot.
-      const dx = (e.global.x - this.dragState.lastX) / this.zoom;
-      const dy = (e.global.y - this.dragState.lastY) / this.zoom;
-      this.dragState.lastX = e.global.x;
-      this.dragState.lastY = e.global.y;
-      this.onDrag?.(this.dragState.id, dx, dy);
+      if (this.dragState) {
+        const dx = (e.global.x - this.dragState.lastX) / this.zoom;
+        const dy = (e.global.y - this.dragState.lastY) / this.zoom;
+        this.dragState.lastX = e.global.x;
+        this.dragState.lastY = e.global.y;
+        this.onDrag?.(this.dragState.id, dx, dy);
+      }
+      if (this.pivotDragState) {
+        const dx = (e.global.x - this.pivotDragState.lastX) / this.zoom;
+        const dy = (e.global.y - this.pivotDragState.lastY) / this.zoom;
+        this.pivotDragState.lastX = e.global.x;
+        this.pivotDragState.lastY = e.global.y;
+        this.onPivotDrag?.(
+          this.pivotDragState.spriteId,
+          this.pivotDragState.bindingId,
+          dx,
+          dy,
+        );
+      }
     });
 
     // Window-level pointerup so drags terminate even when released outside
-    // the canvas.
+    // the canvas. Same handler clears both kinds of drag state.
     this.windowPointerUpHandler = () => {
       if (this.dragState) {
         const sprite = this.spriteMap.get(this.dragState.id);
         if (sprite) sprite.cursor = "grab";
       }
       this.dragState = null;
+      if (this.pivotDragState) {
+        if (this.pivotDot) this.pivotDot.cursor = "grab";
+      }
+      this.pivotDragState = null;
     };
     window.addEventListener("pointerup", this.windowPointerUpHandler);
 
@@ -729,6 +847,29 @@ export class PixiApp {
     sprite.visible = ms.visible;
     sprite.anchor.set(ms.anchor.x, ms.anchor.y);
   }
+}
+
+/** Pose-binding pivot dot. Visually distinct from the anchor crosshair
+ *  (which is tied to the selected sprite's anchor) — a hollow ring
+ *  with a small center fill so it reads as "drag me to set the pose
+ *  pivot point." Larger hit area than visual area for easier grabbing. */
+function createPivotDot(): Graphics {
+  const ACCENT = 0xff7755;
+  return (
+    new Graphics()
+      // Outer hit area — invisible but contributes to bounding box for
+      // pointer hit testing. 16px circle is comfortable for grabbing.
+      .circle(0, 0, 16)
+      .fill({ color: ACCENT, alpha: 0 })
+      // Visible ring.
+      .circle(0, 0, 9)
+      .stroke({ width: 2.5, color: 0xffffff })
+      .circle(0, 0, 9)
+      .stroke({ width: 1.5, color: ACCENT })
+      // Center dot.
+      .circle(0, 0, 3)
+      .fill(ACCENT)
+  );
 }
 
 /** Small accent-colored crosshair + filled dot used to mark the selected

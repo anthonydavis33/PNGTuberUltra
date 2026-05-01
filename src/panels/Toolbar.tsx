@@ -425,7 +425,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 8b — pose pivot</span>
+      <span className="status">Phase 8c — pivot dot</span>
 
       <button
         className="tool-btn icon-only toolbar-settings-btn"

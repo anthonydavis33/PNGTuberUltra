@@ -619,9 +619,36 @@ body,
 
 .pose-binding-row-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 24px;
+  grid-template-columns: minmax(0, 1fr) auto 24px 24px;
   gap: 6px;
   align-items: center;
+}
+
+.pose-binding-canvas-edit {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 3px;
+  transition:
+    color 0.1s,
+    border-color 0.1s,
+    background 0.1s;
+}
+
+.pose-binding-canvas-edit:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.pose-binding-canvas-edit.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(255, 119, 85, 0.12);
 }
 
 .pose-binding-row select {

@@ -499,6 +499,7 @@ export function Properties() {
                     binding={b}
                     channels={poseChannels}
                     model={model}
+                    spriteId={sprite.id}
                     onChange={(patch) =>
                       updateBinding(sprite.id, b.id, patch)
                     }

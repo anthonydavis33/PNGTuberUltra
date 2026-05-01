@@ -15,13 +15,14 @@
 // editing, same shape as the AnimationRow's tween-target editor.
 
 import { useMemo, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Crosshair, Trash2 } from "lucide-react";
 import { NumberField } from "./NumberField";
 import {
   type AvatarModel,
   type PoseBinding,
   type Transform,
 } from "../types/avatar";
+import { useEditor } from "../store/useEditor";
 
 /** Properties a pose binding can drive. Same set as animation tween
  *  bodies — alpha is excluded because alpha-as-pose is rarely useful
@@ -40,6 +41,9 @@ interface PoseBindingRowProps {
   binding: PoseBinding;
   channels: string[];
   model: AvatarModel;
+  /** Owning sprite id — needed by the "Edit on canvas" toggle so the
+   *  editor store knows which sprite the active binding lives on. */
+  spriteId: string;
   onChange: (patch: Partial<PoseBinding>) => void;
   onRemove: () => void;
 }
@@ -47,9 +51,23 @@ interface PoseBindingRowProps {
 export function PoseBindingRow({
   binding,
   channels,
+  spriteId,
   onChange,
   onRemove,
 }: PoseBindingRowProps) {
+  const activePoseBinding = useEditor((s) => s.activePoseBinding);
+  const setActivePoseBinding = useEditor((s) => s.setActivePoseBinding);
+  const isActiveOnCanvas =
+    activePoseBinding?.spriteId === spriteId &&
+    activePoseBinding?.bindingId === binding.id;
+
+  const toggleCanvasEdit = (): void => {
+    if (isActiveOnCanvas) {
+      setActivePoseBinding(null);
+    } else {
+      setActivePoseBinding({ spriteId, bindingId: binding.id });
+    }
+  };
   const channelOptions = useMemo(() => {
     const arr = [...channels];
     if (binding.input && !arr.includes(binding.input)) arr.unshift(binding.input);
@@ -89,6 +107,21 @@ export function PoseBindingRow({
         <span className="pose-binding-arrow" aria-hidden="true">
           → pose
         </span>
+        <button
+          className={`pose-binding-canvas-edit ${
+            isActiveOnCanvas ? "active" : ""
+          }`}
+          onClick={toggleCanvasEdit}
+          title={
+            isActiveOnCanvas
+              ? "Stop editing pivot on canvas"
+              : "Edit pivot on canvas — drag the orange dot that appears at the pivot location to reposition it visually instead of typing X/Y."
+          }
+          aria-label="Toggle on-canvas pivot editing"
+          aria-pressed={isActiveOnCanvas}
+        >
+          <Crosshair size={12} />
+        </button>
         <button
           className="binding-delete"
           onClick={onRemove}
