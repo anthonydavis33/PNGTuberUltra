@@ -7,7 +7,9 @@ import {
   type Binding,
   type BindingCondition,
   type BindingMappingLinear,
+  type PoseBinding,
   type Sprite,
+  type Transform,
   type TransformBinding,
   type TransformTarget,
   type VisibilityBinding,
@@ -19,8 +21,15 @@ export function isVisibilityBinding(b: Binding): b is VisibilityBinding {
   return b.target === "visible";
 }
 
+export function isPoseBinding(b: Binding): b is PoseBinding {
+  return b.target === "pose";
+}
+
+/** A transform binding is anything driving a single transform property
+ *  via linear / stateMap mapping. Excludes visibility AND pose, which
+ *  use their own evaluator paths. */
 export function isTransformBinding(b: Binding): b is TransformBinding {
-  return b.target !== "visible";
+  return b.target !== "visible" && b.target !== "pose";
 }
 
 // ---------- Visibility ----------
@@ -188,4 +197,51 @@ export function applyTransformBindings(
       : value;
   }
   return overrides;
+}
+
+// ---------- Pose ----------
+
+/**
+ * Compute progress [0, 1] for a pose binding from its current channel
+ * value. Returns 0 when the channel can't produce a number (skip the
+ * binding entirely). Mirrors evaluateLinearMapping's semantics but
+ * always outputs into [0, 1] range — pose body provides the output
+ * targets per-property.
+ */
+export function evaluatePoseProgress(b: PoseBinding): number {
+  const channelValue = inputBus.get(b.input);
+  const num = valueAsNumber(channelValue);
+  if (num === null) return 0;
+
+  const span = b.inMax - b.inMin;
+  const t = span === 0 ? 0 : (num - b.inMin) / span;
+  if (b.clamped === false) return t;
+  return Math.max(0, Math.min(1, t));
+}
+
+/**
+ * Compute additive transform offsets from every active pose binding on
+ * a sprite. Each binding contributes (target × progress) per property;
+ * multiple pose bindings on the same sprite stack additively (so
+ * HeadPitch-driven head-tilt and HeadYaw-driven head-turn compose
+ * cleanly without needing to coordinate ranges).
+ *
+ * Returned offsets feed into the same pipeline slot as animation tween
+ * offsets — added to base + transform-binding overrides BEFORE
+ * modifiers run, so springs / drag still smooth the combined target.
+ */
+export function applyPoseBindings(sprite: Sprite): Partial<Transform> {
+  const offsets: Partial<Transform> = {};
+  for (const b of sprite.bindings) {
+    if (!isPoseBinding(b)) continue;
+    const progress = evaluatePoseProgress(b);
+    if (progress === 0) continue;
+
+    for (const key of Object.keys(b.pose) as (keyof Transform)[]) {
+      const v = b.pose[key];
+      if (typeof v !== "number") continue;
+      offsets[key] = (offsets[key] ?? 0) + v * progress;
+    }
+  }
+  return offsets;
 }

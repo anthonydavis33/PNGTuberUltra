@@ -1,30 +1,31 @@
-// Builds a self-contained sample avatar at runtime — no bundled art assets.
-// Used by the Toolbar's "Load Sample" affordance to drop users into a
-// working multi-sprite rig in one click, both as onboarding and as a
-// validation fixture for the rigging stack.
+// Builds self-contained sample avatars at runtime — no bundled art assets.
+// Used by the Toolbar's "Sample" dropdown to drop users into a working
+// rig in one click. Each sample focuses on a different slice of the
+// rigging stack so users can see the primitives in isolation:
 //
-// Generation strategy: render placeholder shapes to an OffscreenCanvas /
-// HTMLCanvasElement, encode as PNG bytes, feed through loadBytesAsAsset
-// so the sample's textures live in the SAME Pixi cache + AssetEntry
-// registry as real loaded files. Net effect: a sample rig saves to
-// .pnxr and re-opens like any user-authored avatar.
+//   - "Bongo Cat"    : visibility bindings + regions + animations on a
+//                       multi-sprite layered rig (the canonical "paws
+//                       drop while typing" demo).
+//   - "Head Pose"    : pose bindings stacking on a single sprite, with
+//                       Spring modifier smoothing the combined target.
+//                       MouseX / MouseY / MicVolume all contribute.
 //
-// The rig itself is a "Bongo Cat-style" exercise — body + eyes + four
-// paws split between idle/down sprites — that touches every major
-// rigging primitive (visibility bindings with both equals and notEquals,
-// transform bindings with linear mapping, modifiers, animations,
-// keyboard regions, multi-sprite z-order). If anything composes badly
-// the sample will reveal it; if anything were to silently regress later,
-// loading the sample is a quick smoke test.
+// Generation strategy: render placeholder shapes to an HTMLCanvasElement,
+// encode as PNG bytes, feed through loadBytesAsAsset so the sample's
+// textures live in the SAME Pixi cache + AssetEntry registry as real
+// loaded files. Net effect: a sample rig saves to .pnxr and re-opens
+// like any user-authored avatar.
+//
+// Adding a new sample = write one builder + add an entry to SAMPLES.
+// Anything new shows up in the toolbar dropdown automatically.
 
 import { loadBytesAsAsset } from "../canvas/assetLoader";
 import {
   type AssetEntry,
   type AssetId,
   type AvatarModel,
-  type KeyboardConfig,
+  type PoseBinding,
   type Sprite,
-  type Animation,
 } from "../types/avatar";
 
 /**
@@ -65,6 +66,66 @@ function roundRect(
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
+}
+
+/**
+ * Load a sample asset, preferring a real PNG file from
+ * `public/samples/<sample-id>/` over the canvas-drawn placeholder.
+ *
+ * The artist workflow: drop a PNG at the documented URL → next reload
+ * picks it up automatically. Until the PNG is there, we fall back to
+ * `fallback()` so samples stay loadable during development and so the
+ * placeholder shape acts as a rough reference for what the art is
+ * meant to look like.
+ *
+ * Failure modes that fall through to the canvas fallback:
+ *   - 404 (file not in the public folder yet)
+ *   - non-image Content-Type (e.g. dev server returning index.html
+ *     for a missing route)
+ *   - network errors
+ *
+ * Failures that PROPAGATE: the file exists and Content-Type says image,
+ * but the bytes don't decode as an image. In that case the artist's PNG
+ * is corrupt — surfacing the error is correct.
+ */
+async function loadSamplePngOrFallback(args: {
+  /** Asset id assigned in our registry. Stable per sample. */
+  id: string;
+  /** Display name shown in the editor's asset list. */
+  name: string;
+  /** Public URL — typically `/samples/<sample-id>/<filename>.png`. */
+  url: string;
+  /** Canvas-drawn placeholder. Invoked only when the URL is missing or
+   *  returns non-image content. */
+  fallback: () => HTMLCanvasElement;
+}): Promise<AssetEntry> {
+  try {
+    const res = await fetch(args.url);
+    if (res.ok) {
+      const ct = res.headers.get("Content-Type") ?? "";
+      if (ct.startsWith("image/")) {
+        const buf = await res.arrayBuffer();
+        return loadBytesAsAsset({
+          id: args.id,
+          name: args.name,
+          bytes: new Uint8Array(buf),
+          // Strip parameters like `; charset=...` if any — Blob just
+          // wants the base type.
+          mimeType: ct.split(";")[0],
+        });
+      }
+    }
+  } catch {
+    // Network / fetch error — fall through.
+  }
+  // No real PNG available; render placeholder.
+  const bytes = await canvasToPngBytes(args.fallback());
+  return loadBytesAsAsset({
+    id: args.id,
+    name: args.name,
+    bytes,
+    mimeType: "image/png",
+  });
 }
 
 /** Draw a placeholder body — dark rounded rectangle with little
@@ -153,72 +214,101 @@ function drawPaw(): HTMLCanvasElement {
   return canvas;
 }
 
-const KEYS_LEFT = [
-  "q", "w", "e", "r", "t",
-  "a", "s", "d", "f", "g",
-  "z", "x", "c", "v", "b",
-];
-const KEYS_RIGHT = [
-  "y", "u", "i", "o", "p",
-  "h", "j", "k", "l",
-  "n", "m",
-];
+/** A small mouse-shape prop for the right-paw demo — visual cue that
+ *  "this paw is on a mouse, the mouse channels drive its position." */
+function drawMouse(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 60;
+  canvas.height = 80;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable");
+
+  ctx.fillStyle = "#999";
+  roundRect(ctx, 4, 4, 52, 72, 22);
+  ctx.fill();
+
+  // Subtle button divider line down the middle.
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(30, 8);
+  ctx.lineTo(30, 30);
+  ctx.stroke();
+
+  // Scroll wheel hint.
+  ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+  roundRect(ctx, 26, 12, 8, 14, 4);
+  ctx.fill();
+
+  return canvas;
+}
 
 /**
- * Build the sample rig. Generates placeholder textures, registers them
- * as assets, and returns the complete model + asset pair ready to feed
- * to useAvatar.loadAvatar.
+ * Build the Bongo Cat sample rig.
+ *
+ * The cat sits in the corner of the screen looking at a desk: tilted
+ * body, left paw on a keyboard, right paw on a mouse. Demonstrates:
+ *   - Per-letter paw positioning via stateMap on KeyEvent (left paw
+ *     slides to the position of whichever Q/W/E/R/A/S/D/F is pressed).
+ *   - Mouse-driven paw following via pose binding (right paw tracks
+ *     mouse position, click depresses it).
+ *   - Drag / Spring modifiers smoothing the snappy keyboard
+ *     stateMap output and the continuous mouse output respectively.
+ *   - MicVolume → eye scaleY (talking flap stand-in).
  */
-export async function buildSampleRig(): Promise<{
+export async function buildBongoCatSample(): Promise<{
   model: AvatarModel;
   assets: Record<AssetId, AssetEntry>;
 }> {
-  // ---- Generate placeholder textures ----
-  const [bodyBytes, eyesBytes, pawBytes] = await Promise.all([
-    canvasToPngBytes(drawBody()),
-    canvasToPngBytes(drawEyes()),
-    canvasToPngBytes(drawPaw()),
+  // ---- Resolve assets (real PNGs from public/samples/bongo-cat/ if
+  // present, else canvas placeholders) ----
+  const [bodyAsset, eyesAsset, pawAsset, mouseAsset] = await Promise.all([
+    loadSamplePngOrFallback({
+      id: "asset-demo-body",
+      name: "demo-body",
+      url: "/samples/bongo-cat/body.png",
+      fallback: drawBody,
+    }),
+    loadSamplePngOrFallback({
+      id: "asset-demo-eyes",
+      name: "demo-eyes",
+      url: "/samples/bongo-cat/eyes.png",
+      fallback: drawEyes,
+    }),
+    loadSamplePngOrFallback({
+      id: "asset-demo-paw",
+      name: "demo-paw",
+      url: "/samples/bongo-cat/paw.png",
+      fallback: drawPaw,
+    }),
+    loadSamplePngOrFallback({
+      id: "asset-demo-mouse",
+      name: "demo-mouse",
+      url: "/samples/bongo-cat/mouse.png",
+      fallback: drawMouse,
+    }),
   ]);
-
-  const bodyAsset = await loadBytesAsAsset({
-    id: "asset-demo-body",
-    name: "demo-body",
-    bytes: bodyBytes,
-    mimeType: "image/png",
-  });
-  const eyesAsset = await loadBytesAsAsset({
-    id: "asset-demo-eyes",
-    name: "demo-eyes",
-    bytes: eyesBytes,
-    mimeType: "image/png",
-  });
-  const pawAsset = await loadBytesAsAsset({
-    id: "asset-demo-paw",
-    name: "demo-paw",
-    bytes: pawBytes,
-    mimeType: "image/png",
-  });
 
   const assets: Record<AssetId, AssetEntry> = {
     [bodyAsset.id]: bodyAsset,
     [eyesAsset.id]: eyesAsset,
     [pawAsset.id]: pawAsset,
+    [mouseAsset.id]: mouseAsset,
   };
 
   // ---- Per-sprite definitions ----
   // Z-order goes bottom→top; the model sprites array is the render order.
-  // Using `sprite-demo-*` ids so they don't collide with the auto-
-  // generated sprite-N ids if the user adds sprites after loading.
 
+  // Body tilted slightly left so the cat reads as facing into a corner
+  // of the screen. Sine modifier on Y for slow idle breathing.
   const body: Sprite = {
     id: "sprite-demo-body",
     name: "Body",
     asset: bodyAsset.id,
-    transform: { x: 0, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
+    transform: { x: 0, y: 20, rotation: -8, scaleX: 1, scaleY: 1 },
     anchor: { x: 0.5, y: 0.5 },
     visible: true,
     bindings: [],
-    // Slow idle bob — proves the sine modifier is alive.
     modifiers: [
       {
         id: "mod-demo-body-bob",
@@ -235,11 +325,9 @@ export async function buildSampleRig(): Promise<{
     id: "sprite-demo-eyes",
     name: "Eyes",
     asset: eyesAsset.id,
-    transform: { x: 0, y: -20, rotation: 0, scaleX: 1, scaleY: 1 },
+    transform: { x: -8, y: -22, rotation: -8, scaleX: 1, scaleY: 1 },
     anchor: { x: 0.5, y: 0.5 },
     visible: true,
-    // Mic-volume mouth-flap stand-in: eyes squish vertically as you
-    // speak. Rough but illustrative without needing real mouth art.
     bindings: [
       {
         id: "b-demo-eyes-talk",
@@ -259,131 +347,476 @@ export async function buildSampleRig(): Promise<{
     modifiers: [],
   };
 
-  // Idle paws — visible UNLESS the corresponding region is active. Two
-  // notEquals visibility bindings per side handles "any KeyRegion that
-  // isn't this one keeps the idle paw visible" cleanly. AND-composition
-  // across multiple bindings is how computeSpriteVisibility works.
-  const idleLeft: Sprite = {
-    id: "sprite-demo-idle-left",
-    name: "Left paw (idle)",
+  // Visual mouse prop — sits below where the right paw rests so the
+  // user sees what the paw is "on." No bindings; pure decoration.
+  const mouseProp: Sprite = {
+    id: "sprite-demo-mouse",
+    name: "Mouse (prop)",
+    asset: mouseAsset.id,
+    transform: { x: 90, y: 110, rotation: 6, scaleX: 1, scaleY: 1 },
+    anchor: { x: 0.5, y: 0.5 },
+    visible: true,
+    bindings: [],
+    modifiers: [],
+  };
+
+  // Left paw: stateMap on KeyEvent maps each Q/W/E/R/A/S/D/F to a key
+  // position on the imaginary keyboard. Two bindings — one for x, one
+  // for y — because stateMap is single-property.
+  //
+  // Coordinate strategy: x ranges -110 (Q/A column) to -35 (R/F column)
+  // in 25px steps; y is 75 for top row (Q/W/E/R), 95 for home row
+  // (A/S/D/F). When KeyEvent doesn't match any entry (no key, or a key
+  // outside the set), bindings produce null → no override → paw rests
+  // at its base transform.
+  //
+  // Drag modifiers on x and y smooth the snap so the paw glides to the
+  // new key position instead of teleporting.
+  const leftPaw: Sprite = {
+    id: "sprite-demo-left-paw",
+    name: "Left paw (keys)",
     asset: pawAsset.id,
-    transform: { x: -70, y: 80, rotation: -8, scaleX: 1, scaleY: 1 },
+    transform: { x: -75, y: 85, rotation: -10, scaleX: 1, scaleY: 1 },
     anchor: { x: 0.5, y: 0.5 },
     visible: true,
     bindings: [
       {
-        id: "b-demo-idle-left-hide",
-        target: "visible",
-        input: "KeyRegion",
-        condition: { op: "notEquals", value: "left" },
+        id: "b-leftpaw-x",
+        target: "x",
+        input: "KeyEvent",
+        mapping: {
+          type: "stateMap",
+          entries: [
+            { key: "q", value: -110 },
+            { key: "w", value: -85 },
+            { key: "e", value: -60 },
+            { key: "r", value: -35 },
+            { key: "a", value: -110 },
+            { key: "s", value: -85 },
+            { key: "d", value: -60 },
+            { key: "f", value: -35 },
+          ],
+        },
+      },
+      {
+        id: "b-leftpaw-y",
+        target: "y",
+        input: "KeyEvent",
+        mapping: {
+          type: "stateMap",
+          entries: [
+            { key: "q", value: 75 },
+            { key: "w", value: 75 },
+            { key: "e", value: 75 },
+            { key: "r", value: 75 },
+            { key: "a", value: 95 },
+            { key: "s", value: 95 },
+            { key: "d", value: 95 },
+            { key: "f", value: 95 },
+          ],
+        },
       },
     ],
-    modifiers: [],
+    modifiers: [
+      {
+        id: "mod-leftpaw-drag-x",
+        type: "drag",
+        property: "x",
+        rate: 14,
+      },
+      {
+        id: "mod-leftpaw-drag-y",
+        type: "drag",
+        property: "y",
+        rate: 14,
+      },
+    ],
   };
 
-  const idleRight: Sprite = {
-    id: "sprite-demo-idle-right",
-    name: "Right paw (idle)",
+  // Right paw: pose bindings drive position from MouseX / MouseY /
+  // MouseLeft. Three bindings stacking — two continuous (mouse track)
+  // and one boolean (click → push down). Spring modifiers on x and y
+  // give the paw weight so it doesn't perfectly track the cursor.
+  //
+  // The paw rests at (90, 95) — over the mouse prop. Pose offsets push
+  // it around as the user moves their mouse on the canvas.
+  const rightPaw: Sprite = {
+    id: "sprite-demo-right-paw",
+    name: "Right paw (mouse)",
     asset: pawAsset.id,
-    transform: { x: 70, y: 80, rotation: 8, scaleX: 1, scaleY: 1 },
+    transform: { x: 90, y: 95, rotation: 6, scaleX: 1, scaleY: 1 },
     anchor: { x: 0.5, y: 0.5 },
     visible: true,
     bindings: [
       {
-        id: "b-demo-idle-right-hide",
-        target: "visible",
-        input: "KeyRegion",
-        condition: { op: "notEquals", value: "right" },
-      },
-    ],
-    modifiers: [],
-  };
-
-  // Press-bounce animation reused across both down paws — defined as a
-  // factory because Animation ids must be unique per sprite. holdActive
-  // mode keeps the paw pressed-down-and-shrunk while keys are held, then
-  // lerps back up on release.
-  const downBounce = (id: string): Animation => ({
-    id,
-    name: "Press bounce",
-    trigger: { kind: "channelTruthy", channel: "KeyRegion" },
-    body: { kind: "tween", targets: { y: 8, scaleY: -0.1 } },
-    durationMs: 120,
-    easing: "easeOut",
-    mode: "holdActive",
-  });
-
-  const downLeft: Sprite = {
-    id: "sprite-demo-down-left",
-    name: "Left paw (down)",
-    asset: pawAsset.id,
-    transform: { x: -70, y: 95, rotation: -4, scaleX: 1, scaleY: 0.9 },
-    anchor: { x: 0.5, y: 0.5 },
-    visible: true,
-    bindings: [
-      {
-        id: "b-demo-down-left-show",
-        target: "visible",
-        input: "KeyRegion",
-        condition: { op: "equals", value: "left" },
-      },
-    ],
-    modifiers: [],
-    animations: [downBounce("a-demo-down-left-bounce")],
-  };
-
-  const downRight: Sprite = {
-    id: "sprite-demo-down-right",
-    name: "Right paw (down)",
-    asset: pawAsset.id,
-    transform: { x: 70, y: 95, rotation: 4, scaleX: 1, scaleY: 0.9 },
-    anchor: { x: 0.5, y: 0.5 },
-    visible: true,
-    bindings: [
-      {
-        id: "b-demo-down-right-show",
-        target: "visible",
-        input: "KeyRegion",
-        condition: { op: "equals", value: "right" },
-      },
-    ],
-    modifiers: [],
-    animations: [downBounce("a-demo-down-right-bounce")],
-  };
-
-  // ---- Keyboard config ----
-  // Left/right halves of QWERTY home + adjacent rows. Momentary so the
-  // active region clears as soon as the last key is released — that
-  // matches what users expect for "paw down while typing."
-  const keyboard: KeyboardConfig = {
-    regions: [
-      {
-        id: "demo-region-left",
-        name: "left",
-        keys: KEYS_LEFT,
-        mode: "momentary",
+        id: "b-rightpaw-mousex",
+        target: "pose",
+        input: "MouseX",
+        inMin: -1,
+        inMax: 1,
+        clamped: true,
+        pose: { x: 35 },
       },
       {
-        id: "demo-region-right",
-        name: "right",
-        keys: KEYS_RIGHT,
-        mode: "momentary",
+        id: "b-rightpaw-mousey",
+        target: "pose",
+        input: "MouseY",
+        inMin: -1,
+        inMax: 1,
+        clamped: true,
+        pose: { y: 25 },
+      },
+      // Click → press down: tiny y-shift + flatten to mimic the paw
+      // pressing the mouse button.
+      {
+        id: "b-rightpaw-click",
+        target: "pose",
+        input: "MouseLeft",
+        inMin: 0,
+        inMax: 1,
+        clamped: true,
+        pose: { y: 4, scaleY: -0.08 },
       },
     ],
-    hotkeys: [],
+    modifiers: [
+      {
+        id: "mod-rightpaw-spring-x",
+        type: "spring",
+        property: "x",
+        stiffness: 0.45,
+        damping: 0.7,
+      },
+      {
+        id: "mod-rightpaw-spring-y",
+        type: "spring",
+        property: "y",
+        stiffness: 0.45,
+        damping: 0.7,
+      },
+    ],
   };
 
   // ---- Final assembly ----
-  // Render order: body (back) → idle paws → down paws → eyes (front).
-  // Idle paws sit above body so when they hide, body shows through.
-  // Down paws sit above idle so they cover the idle position cleanly
-  // even at the boundary frame where both might briefly be visible.
-  // Eyes on top so the mic-volume bind stays visible across all states.
+  // Render order: body → eyes → mouse prop → paws.
+  // Paws on top so they appear "in front of" the keyboard / mouse.
+  // No keyboard regions config — the per-letter stateMap on the left
+  // paw doesn't need them, and adding regions just to leave them
+  // unused would be confusing in the editor.
   const model: AvatarModel = {
     schema: 1,
-    sprites: [body, idleLeft, idleRight, downLeft, downRight, eyes],
-    inputs: { keyboard },
+    sprites: [body, eyes, mouseProp, leftPaw, rightPaw],
   };
 
   return { model, assets };
 }
+
+// ============================================================================
+// Head Pose sample
+// ============================================================================
+// Demonstrates pose bindings: one channel drives MULTIPLE transform properties
+// at once (so a "head sway" rig is one binding instead of three coordinated
+// linear bindings). Multiple pose bindings on the same sprite stack additively
+// — MouseX side-lean + MouseY up/down + MicVolume talk-bob all compose without
+// fighting each other. A Spring modifier on rotation smooths the combined
+// target so rapid mouse movements don't snap the head.
+
+/** Simple torso — anchored at top so the head can sit naturally above it. */
+function drawSimpleBody(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 140;
+  canvas.height = 200;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable");
+
+  ctx.fillStyle = "#3a3a3a";
+  roundRect(ctx, 10, 10, 120, 180, 28);
+  ctx.fill();
+
+  // Subtle highlight for depth.
+  ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+  roundRect(ctx, 22, 24, 80, 80, 22);
+  ctx.fill();
+
+  return canvas;
+}
+
+/** Round head with eye whites but NO pupils + a small mouth line.
+ *  Pupils are separate sprites in this rig so they can move with mouse
+ *  position and demonstrate clipping (each pupil clipped to the head
+ *  outline). */
+function drawSimpleHead(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 200;
+  canvas.height = 200;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable");
+
+  // Head circle.
+  ctx.fillStyle = "#4a4a4a";
+  ctx.beginPath();
+  ctx.arc(100, 100, 88, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Highlight.
+  ctx.fillStyle = "rgba(255, 255, 255, 0.06)";
+  ctx.beginPath();
+  ctx.arc(72, 70, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye whites — pupils render as separate sprites on top.
+  ctx.fillStyle = "#f4f4f4";
+  ctx.beginPath();
+  ctx.ellipse(72, 92, 18, 22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(128, 92, 18, 22, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Small mouth — placeholder for a future MouthOpen-driven scaleY.
+  ctx.fillStyle = "#1a1a1a";
+  roundRect(ctx, 86, 138, 28, 8, 4);
+  ctx.fill();
+
+  return canvas;
+}
+
+/** A single pupil — small black ellipse. Two pupil sprites in the
+ *  Head Pose rig, each with their own MouseX / MouseY pose binding so
+ *  they track the cursor independently and clipping keeps them inside
+ *  the head outline. */
+function drawPupil(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 30;
+  canvas.height = 30;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable");
+
+  ctx.fillStyle = "#1a1a1a";
+  ctx.beginPath();
+  ctx.ellipse(15, 15, 8, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tiny highlight glint to make it feel less like a dot.
+  ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+  ctx.beginPath();
+  ctx.ellipse(12, 11, 2.5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  return canvas;
+}
+
+export async function buildHeadPoseSample(): Promise<{
+  model: AvatarModel;
+  assets: Record<AssetId, AssetEntry>;
+}> {
+  // Resolve assets — real PNGs from public/samples/head-pose/ if
+  // present, else canvas placeholders.
+  const [bodyAsset, headAsset, pupilAsset] = await Promise.all([
+    loadSamplePngOrFallback({
+      id: "asset-pose-body",
+      name: "pose-body",
+      url: "/samples/head-pose/body.png",
+      fallback: drawSimpleBody,
+    }),
+    loadSamplePngOrFallback({
+      id: "asset-pose-head",
+      name: "pose-head",
+      url: "/samples/head-pose/head.png",
+      fallback: drawSimpleHead,
+    }),
+    loadSamplePngOrFallback({
+      id: "asset-pose-pupil",
+      name: "pose-pupil",
+      url: "/samples/head-pose/pupil.png",
+      fallback: drawPupil,
+    }),
+  ]);
+
+  const assets: Record<AssetId, AssetEntry> = {
+    [bodyAsset.id]: bodyAsset,
+    [headAsset.id]: headAsset,
+    [pupilAsset.id]: pupilAsset,
+  };
+
+  const body: Sprite = {
+    id: "sprite-pose-body",
+    name: "Body",
+    asset: bodyAsset.id,
+    transform: { x: 0, y: 80, rotation: 0, scaleX: 1, scaleY: 1 },
+    anchor: { x: 0.5, y: 0.5 },
+    visible: true,
+    bindings: [],
+    modifiers: [],
+  };
+
+  // Four pose bindings stacking on the head:
+  //
+  //  1. MouseX → x + rotation + scaleX  ← the limitation demo
+  //     ScaleX shrinks/stretches the head horizontally as a CHEAP
+  //     fake-perspective for "turning to look right". Watch it: the
+  //     entire face squishes uniformly, including the eye whites,
+  //     because affine transforms can't do real 3D perspective.
+  //     A true 3D-style turn would need 4-corner mesh deformation
+  //     (deferred to phase 8d). This is the limitation worth seeing
+  //     before deciding whether you need 8d for a real rig.
+  //  2. MouseY → y + scaleY  (up/down + chin-tuck stretch)
+  //  3. MicVolume → y + rotation  (talking bob)
+  //  4. (no fourth — three are enough to show stacking)
+  const mouseSwayBinding: PoseBinding = {
+    id: "b-pose-mouse-sway",
+    target: "pose",
+    input: "MouseX",
+    inMin: -1,
+    inMax: 1,
+    clamped: true,
+    pose: { x: 40, rotation: -8, scaleX: -0.12 },
+  };
+  const mouseUpDownBinding: PoseBinding = {
+    id: "b-pose-mouse-updown",
+    target: "pose",
+    input: "MouseY",
+    inMin: -1,
+    inMax: 1,
+    clamped: true,
+    pose: { y: 25, scaleY: -0.05 },
+  };
+  const micBobBinding: PoseBinding = {
+    id: "b-pose-mic-bob",
+    target: "pose",
+    input: "MicVolume",
+    inMin: 0,
+    inMax: 1,
+    clamped: true,
+    pose: { y: -10, scaleY: 0.06 },
+  };
+
+  const head: Sprite = {
+    id: "sprite-pose-head",
+    name: "Head",
+    asset: headAsset.id,
+    transform: { x: 0, y: -60, rotation: 0, scaleX: 1, scaleY: 1 },
+    anchor: { x: 0.5, y: 0.5 },
+    visible: true,
+    bindings: [mouseSwayBinding, mouseUpDownBinding, micBobBinding],
+    // Spring on rotation smooths the combined rotation contribution
+    // from MouseX + MicVolume. Without it, rapid mouse moves snap the
+    // head — with it, the head feels weighty and natural.
+    modifiers: [
+      {
+        id: "mod-pose-spring-rot",
+        type: "spring",
+        property: "rotation",
+        stiffness: 0.4,
+        damping: 0.7,
+      },
+    ],
+  };
+
+  // Pupils — separate sprites that follow the mouse independently of
+  // the head. Each is alpha-clipped against the head sprite, so when
+  // the head moves / scales, pupils that drift to the edge of the eye
+  // socket get cleanly cut at the head outline. Each pupil has its
+  // own MouseX / MouseY pose binding so they track the cursor with
+  // tighter range than the head movement (a few px, not 40px) — the
+  // effect is "eyes follow cursor while head leans toward it."
+  //
+  // Both pupils share identical pose bindings — what makes them feel
+  // distinct is their base transform position (over the left vs right
+  // eye white).
+  const pupilPoseBindings = (idPrefix: string): PoseBinding[] => [
+    {
+      id: `${idPrefix}-mousex`,
+      target: "pose",
+      input: "MouseX",
+      inMin: -1,
+      inMax: 1,
+      clamped: true,
+      pose: { x: 8 },
+    },
+    {
+      id: `${idPrefix}-mousey`,
+      target: "pose",
+      input: "MouseY",
+      inMin: -1,
+      inMax: 1,
+      clamped: true,
+      pose: { y: 6 },
+    },
+  ];
+
+  const leftPupil: Sprite = {
+    id: "sprite-pose-pupil-left",
+    name: "Left pupil",
+    asset: pupilAsset.id,
+    // Position over the left eye white in the head texture (which is at
+    // local 72, 92 — translated to world coords given head's transform
+    // and 200x200 canvas centered at anchor, so ~-28, -68).
+    transform: { x: -28, y: -68, rotation: 0, scaleX: 1, scaleY: 1 },
+    anchor: { x: 0.5, y: 0.5 },
+    visible: true,
+    bindings: pupilPoseBindings("b-leftpupil"),
+    modifiers: [],
+    clipBy: "sprite-pose-head",
+  };
+
+  const rightPupil: Sprite = {
+    id: "sprite-pose-pupil-right",
+    name: "Right pupil",
+    asset: pupilAsset.id,
+    transform: { x: 28, y: -68, rotation: 0, scaleX: 1, scaleY: 1 },
+    anchor: { x: 0.5, y: 0.5 },
+    visible: true,
+    bindings: pupilPoseBindings("b-rightpupil"),
+    modifiers: [],
+    clipBy: "sprite-pose-head",
+  };
+
+  // Render order: body (back) → head → pupils (front). Pupils on top
+  // of head so they render over the eye whites; clipping keeps them
+  // bounded to the head outline anyway.
+  const model: AvatarModel = {
+    schema: 1,
+    sprites: [body, head, leftPupil, rightPupil],
+  };
+
+  return { model, assets };
+}
+
+// ============================================================================
+// Sample registry
+// ============================================================================
+
+/** A sample rig the user can load from the Toolbar dropdown. Adding a
+ *  new sample = write a builder and append an entry here. */
+export interface SampleEntry {
+  /** Stable identifier — used as the React key in the dropdown. */
+  id: string;
+  /** Short label in the dropdown menu. */
+  name: string;
+  /** One-line description shown below the name in the dropdown. */
+  description: string;
+  /** Builder that produces the model + assets pair. Async because asset
+   *  generation goes through the same canvas-encode pipeline as real
+   *  PNG loading. */
+  build: () => Promise<{
+    model: AvatarModel;
+    assets: Record<AssetId, AssetEntry>;
+  }>;
+}
+
+export const SAMPLES: SampleEntry[] = [
+  {
+    id: "bongo-cat",
+    name: "Bongo Cat",
+    description:
+      "Tilted body in the corner. Left paw slides to QWER/ASDF letters via stateMap; right paw follows the mouse with click depression. Drag + Spring smoothing.",
+    build: buildBongoCatSample,
+  },
+  {
+    id: "head-pose",
+    name: "Head Pose",
+    description:
+      "Stacked pose bindings + clipping-masked pupils that follow the mouse. ScaleX in the MouseX pose deliberately reveals the affine limitation — face squishes uniformly because real 3D perspective needs 4-corner mesh.",
+    build: buildHeadPoseSample,
+  },
+];

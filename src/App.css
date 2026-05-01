@@ -601,6 +601,128 @@ body,
   text-align: center;
 }
 
+/* Pose binding rows reuse the transform-binding container styling (same
+ * background / border / padding) but have a different top-row layout —
+ * just channel + "→ pose" label + delete, no per-property target picker
+ * up top because pose drives multiple properties. The targets list at
+ * the bottom mirrors the animation tween-target editor. */
+.pose-binding-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.pose-binding-row-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 24px;
+  gap: 6px;
+  align-items: center;
+}
+
+.pose-binding-row select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.pose-binding-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pose-binding-arrow {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.pose-binding-clamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.pose-binding-clamp input[type="checkbox"] {
+  margin: 0;
+}
+
+.pose-binding-targets-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.pose-binding-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pose-binding-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--bg);
+}
+
+.pose-binding-target.active {
+  border-color: var(--accent);
+  background: rgba(255, 119, 85, 0.08);
+}
+
+.pose-binding-target input[type="checkbox"] {
+  margin: 0;
+}
+
+.pose-binding-target-label {
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pose-binding-target.active .pose-binding-target-label {
+  color: var(--text);
+}
+
+.pose-binding-row .number-field {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pose-binding-row .number-field-label:empty {
+  display: none;
+}
+
+.pose-binding-row .number-field input {
+  width: 60px;
+}
+
 .transform-binding-additive {
   display: flex;
   align-items: center;
@@ -1582,6 +1704,68 @@ body,
 /* Settings gear sits after the phase-status text in the toolbar. The
  * .toolbar .status before it has margin-left: auto, which right-aligns
  * the cluster — the gear inherits that placement automatically. */
+
+/* Sample dropdown menu (toolbar) ------------------------------------- */
+.sample-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.sample-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 280px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sample-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
+}
+
+.sample-menu-item:hover:not(:disabled) {
+  background: rgba(255, 119, 85, 0.08);
+  border-color: var(--accent);
+}
+
+.sample-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sample-menu-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sample-menu-desc {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
 
 .keyboard-popover {
   width: 520px;

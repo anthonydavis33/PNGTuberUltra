@@ -199,10 +199,61 @@ export interface TransformBinding {
   mapping: BindingMapping;
 }
 
-export type Binding = VisibilityBinding | TransformBinding;
+/**
+ * Pose binding — multi-property version of a transform binding. The
+ * channel value lerps progress between rest (binding does nothing) and
+ * the configured `pose` (additive offsets applied on top of base +
+ * other bindings). One pose binding replaces the typical 3-property
+ * coordinated rig for things like "head tilt forward" (Y-shift +
+ * rotation + ScaleY all driven from HeadPitch with their ranges
+ * tuned together).
+ *
+ * Stacks additively with other pose bindings AND with linear-mapping
+ * transform bindings on the same sprite — multiple pose bindings on
+ * a head sprite (one for HeadPitch, one for HeadYaw) compose cleanly
+ * without fighting each other.
+ *
+ * Future: phase 8b adds an optional pivot { x, y } so scale / rotation
+ * within the pose can swing around a custom point (chin-anchored ScaleY
+ * for natural head-lean perspective). 8c adds a free-transform-box
+ * overlay for editing the pose by direct manipulation rather than
+ * typed offsets.
+ */
+export interface PoseBinding {
+  id: string;
+  target: "pose";
+  /** Bus channel name. Continuous numeric channels work cleanly
+   *  (HeadPitch / HeadYaw / MicVolume / MouseX). Booleans coerce to
+   *  0/1; non-numeric strings make the binding a no-op. */
+  input: string;
+  /** Channel-value range that maps to progress [0, 1]. inMin → progress
+   *  0 (rest), inMax → progress 1 (full pose). Values can be inverted
+   *  (inMin > inMax) to flip the response. */
+  inMin: number;
+  inMax: number;
+  /** Clamp progress to [0, 1] (default true). When false, channel
+   *  values outside the range overshoot — useful for "120% expression"
+   *  rigs where you want the pose to keep going at extreme channel
+   *  values. */
+  clamped?: boolean;
+  /**
+   * Target transform offsets applied at progress=1. Each property is
+   * scaled by progress and added to the sprite's base + binding-driven
+   * value, before modifiers run. Same composition rule as the animation
+   * tween body's `targets` field. Properties not listed have no offset.
+   */
+  pose: Partial<Transform>;
+}
 
-/** Discrimination kind for picking channel lists / row UIs. */
-export type BindingKind = "visibility" | "transform";
+export type Binding = VisibilityBinding | TransformBinding | PoseBinding;
+
+/** Discrimination kind for picking channel lists / row UIs.
+ *  - "visibility": discrete-value channels for show/hide bindings.
+ *  - "transform":  every channel — linear mappings need numeric input;
+ *                  stateMap mappings work on discrete strings.
+ *  - "pose":       continuous numeric channels (the channel value lerps
+ *                  rest→target). Same picker contents as transform. */
+export type BindingKind = "visibility" | "transform" | "pose";
 
 // ---------------------------------------------------------------- Modifiers
 

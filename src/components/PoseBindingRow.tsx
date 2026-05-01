@@ -1,0 +1,172 @@
+// Single row in the per-sprite Bindings list — pose variant.
+//
+// A pose binding maps one channel's value to a multi-property target
+// transform. The channel-value range [inMin, inMax] lerps progress from
+// rest (0) to full pose (1); progress scales each property's contribution
+// additively on top of the sprite's base + other bindings.
+//
+// Editor layout:
+//   Top:    channel picker + delete
+//   Middle: in-range fields + clamp toggle
+//   Bottom: per-property checkboxes + value fields (which axes the
+//           pose drives, and by how much at progress=1)
+//
+// Free-transform-box editor lands in 8c — for now this is text-field
+// editing, same shape as the AnimationRow's tween-target editor.
+
+import { useMemo } from "react";
+import { Trash2 } from "lucide-react";
+import { NumberField } from "./NumberField";
+import {
+  type AvatarModel,
+  type PoseBinding,
+  type Transform,
+} from "../types/avatar";
+
+/** Properties a pose binding can drive. Same set as animation tween
+ *  bodies — alpha is excluded because alpha-as-pose is rarely useful
+ *  (the existing visibility binding handles show/hide better), and
+ *  frame is excluded because pose lerps continuously and frame is
+ *  discrete. Use a transform binding with stateMap for those. */
+const POSE_PROPERTIES: { key: keyof Transform; label: string; step: number }[] = [
+  { key: "x", label: "X", step: 1 },
+  { key: "y", label: "Y", step: 1 },
+  { key: "rotation", label: "Rot", step: 0.5 },
+  { key: "scaleX", label: "ScX", step: 0.05 },
+  { key: "scaleY", label: "ScY", step: 0.05 },
+];
+
+interface PoseBindingRowProps {
+  binding: PoseBinding;
+  channels: string[];
+  model: AvatarModel;
+  onChange: (patch: Partial<PoseBinding>) => void;
+  onRemove: () => void;
+}
+
+export function PoseBindingRow({
+  binding,
+  channels,
+  onChange,
+  onRemove,
+}: PoseBindingRowProps) {
+  const channelOptions = useMemo(() => {
+    const arr = [...channels];
+    if (binding.input && !arr.includes(binding.input)) arr.unshift(binding.input);
+    return arr;
+  }, [channels, binding.input]);
+
+  const updatePoseTarget = (
+    key: keyof Transform,
+    value: number | null,
+  ): void => {
+    const next = { ...binding.pose };
+    if (value === null) {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+    onChange({ pose: next });
+  };
+
+  const isClamped = binding.clamped !== false;
+
+  return (
+    <li className="pose-binding-row">
+      <div className="pose-binding-row-top">
+        <select
+          className="binding-channel"
+          value={binding.input}
+          onChange={(e) => onChange({ input: e.target.value })}
+          title="Channel value lerps progress from rest to full pose"
+        >
+          {channelOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <span className="pose-binding-arrow" aria-hidden="true">
+          → pose
+        </span>
+        <button
+          className="binding-delete"
+          onClick={onRemove}
+          title="Remove pose binding"
+          aria-label="Remove pose binding"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      <div className="mapping-row">
+        <span className="mapping-label">in</span>
+        <NumberField
+          label=""
+          value={binding.inMin}
+          onChange={(v) => onChange({ inMin: v })}
+          step={0.05}
+          precision={2}
+        />
+        <span className="mapping-dash">–</span>
+        <NumberField
+          label=""
+          value={binding.inMax}
+          onChange={(v) => onChange({ inMax: v })}
+          step={0.05}
+          precision={2}
+        />
+        <label
+          className="pose-binding-clamp"
+          title="Clamp progress to [0, 1]. Uncheck to let extreme channel values overshoot the pose — useful for 'extra-expressive' rigs."
+        >
+          <input
+            type="checkbox"
+            checked={isClamped}
+            onChange={(e) => onChange({ clamped: e.target.checked })}
+          />
+          <span>Clamp</span>
+        </label>
+      </div>
+
+      <div className="pose-binding-targets-label">
+        Pose at progress=1
+      </div>
+      <div className="pose-binding-targets">
+        {POSE_PROPERTIES.map(({ key, label, step }) => {
+          const value = binding.pose[key];
+          const enabled = value !== undefined;
+          return (
+            <label
+              key={key}
+              className={`pose-binding-target ${enabled ? "active" : ""}`}
+              title={
+                enabled
+                  ? `Peak ${label} offset (added on top of base + other bindings at progress=1).`
+                  : `Click to drive ${label} from this pose binding.`
+              }
+            >
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) =>
+                  updatePoseTarget(key, e.target.checked ? 0 : null)
+                }
+              />
+              <span className="pose-binding-target-label">{label}</span>
+              {enabled && (
+                <NumberField
+                  label=""
+                  value={value ?? 0}
+                  onChange={(v) => updatePoseTarget(key, v)}
+                  step={step}
+                  precision={step >= 1 ? 0 : 2}
+                />
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </li>
+  );
+}

@@ -70,6 +70,10 @@ function isPhonemeChannelReachable(model: AvatarModel): boolean {
  *   look up the stringified channel value in the entry table, so discrete
  *   channels (MicPhoneme, MicState, KeyEvent, KeyRegion) are first-class
  *   here too — `MicPhoneme → frame` is the canonical sprite-sheet rig.
+ * - `pose`: continuous numeric channels only. Pose bindings lerp progress
+ *   from rest to a target pose based on the channel's numeric value;
+ *   discrete-string channels can't drive that linearly. Includes mouse
+ *   booleans (they coerce to 0/1, useful for "click → enter pose" rigs).
  */
 export function getKnownChannels(
   model: AvatarModel,
@@ -84,6 +88,16 @@ export function getKnownChannels(
       "Lipsync",
       "KeyEvent",
       "KeyRegion",
+      ...MOUSE_BOOLEAN_CHANNELS,
+    );
+  } else if (kind === "pose") {
+    // Continuous numeric inputs only — pose progress is value-driven.
+    // Booleans included because "MouseLeft → pose" (enter pose on click)
+    // is a useful pattern with a 0..1 range.
+    builtins.push(
+      "MicVolume",
+      ...WEBCAM_CHANNELS,
+      ...MOUSE_CONTINUOUS_CHANNELS,
       ...MOUSE_BOOLEAN_CHANNELS,
     );
   } else {

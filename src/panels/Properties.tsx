@@ -7,6 +7,7 @@ import {
   TransformBindingRow,
   defaultStateMapMapping,
 } from "../components/TransformBindingRow";
+import { PoseBindingRow } from "../components/PoseBindingRow";
 import { ModifierRow } from "../components/ModifierRow";
 import { AnimationRow } from "../components/AnimationRow";
 import { ShowOnPopover } from "./ShowOnPopover";
@@ -18,6 +19,7 @@ import {
   type Animation,
   type Modifier,
   type ModifierType,
+  type PoseBinding,
   type SpriteSheet,
   type SpriteSheetLoopMode,
   type Transform,
@@ -58,6 +60,10 @@ export function Properties() {
   );
   const transformChannels = useMemo(
     () => getKnownChannels(model, "transform"),
+    [model],
+  );
+  const poseChannels = useMemo(
+    () => getKnownChannels(model, "pose"),
     [model],
   );
 
@@ -137,6 +143,25 @@ export function Properties() {
         },
       };
     }
+    addBinding(sprite.id, binding);
+  };
+
+  const addNewPoseBinding = (): void => {
+    // Default pose: HeadPitch driving a small head-tilt-forward gesture.
+    // Pre-populated with reasonable values so the user sees an effect
+    // immediately (small Y-shift down + slight rotation forward + tiny
+    // ScaleY squish) and can either tune from there or wholesale
+    // replace once they understand the shape. inMin=0/inMax=20 maps a
+    // typical head pitch range (degrees) to pose progress.
+    const binding: PoseBinding = {
+      id: newBindingId(),
+      target: "pose",
+      input: "HeadPitch",
+      inMin: 0,
+      inMax: 20,
+      clamped: true,
+      pose: { y: 4, rotation: 4, scaleY: -0.04 },
+    };
     addBinding(sprite.id, binding);
   };
 
@@ -433,6 +458,14 @@ export function Properties() {
               <Plus size={12} />
               Transform
             </button>
+            <button
+              onClick={addNewPoseBinding}
+              className="tool-btn"
+              title="Drive multiple transform properties at once from one channel — channel value lerps progress between rest and a target pose. Replaces the typical 'three coordinated bindings' rig (rotation + Y-shift + ScaleY for a head-lean, etc.) with a single binding."
+            >
+              <Plus size={12} />
+              Pose
+            </button>
           </div>
         </div>
 
@@ -444,17 +477,36 @@ export function Properties() {
           </p>
         ) : (
           <ul className="binding-list">
-            {sprite.bindings.map((b) =>
-              b.target === "visible" ? (
-                <BindingRow
-                  key={b.id}
-                  binding={b}
-                  channels={visibilityChannels}
-                  model={model}
-                  onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
-                  onRemove={() => removeBinding(sprite.id, b.id)}
-                />
-              ) : (
+            {sprite.bindings.map((b) => {
+              if (b.target === "visible") {
+                return (
+                  <BindingRow
+                    key={b.id}
+                    binding={b}
+                    channels={visibilityChannels}
+                    model={model}
+                    onChange={(patch) =>
+                      updateBinding(sprite.id, b.id, patch)
+                    }
+                    onRemove={() => removeBinding(sprite.id, b.id)}
+                  />
+                );
+              }
+              if (b.target === "pose") {
+                return (
+                  <PoseBindingRow
+                    key={b.id}
+                    binding={b}
+                    channels={poseChannels}
+                    model={model}
+                    onChange={(patch) =>
+                      updateBinding(sprite.id, b.id, patch)
+                    }
+                    onRemove={() => removeBinding(sprite.id, b.id)}
+                  />
+                );
+              }
+              return (
                 <TransformBindingRow
                   key={b.id}
                   binding={b}
@@ -463,8 +515,8 @@ export function Properties() {
                   onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
                   onRemove={() => removeBinding(sprite.id, b.id)}
                 />
-              ),
-            )}
+              );
+            })}
           </ul>
         )}
       </section>

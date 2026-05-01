@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ChevronDown,
   FolderOpen,
   Plus,
   Redo2,
@@ -13,7 +14,7 @@ import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { useAvatar } from "../store/useAvatar";
 import { loadFilesAsAssets } from "../canvas/assetLoader";
 import { packAvatar, unpackAvatar } from "../io/pnxr";
-import { buildSampleRig } from "../io/sampleRig";
+import { SAMPLES, type SampleEntry } from "../io/sampleRig";
 import { SettingsPopover } from "./SettingsPopover";
 import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
 import { shortPath } from "../utils/path";
@@ -31,6 +32,8 @@ export function Toolbar() {
   const [isFileBusy, setFileBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSampleMenu, setShowSampleMenu] = useState(false);
+  const sampleMenuRef = useRef<HTMLDivElement>(null);
 
   const registerAsset = useAvatar((s) => s.registerAsset);
   const addSprite = useAvatar((s) => s.addSprite);
@@ -158,24 +161,25 @@ export function Toolbar() {
     }
   };
 
-  const handleLoadSample = async () => {
+  const handleLoadSample = async (sample: SampleEntry) => {
     if (isFileBusy) return;
+    setShowSampleMenu(false);
     if (
       isDirty &&
       !window.confirm(
-        "You have unsaved changes. Load the sample rig anyway?",
+        `You have unsaved changes. Load the "${sample.name}" sample anyway?`,
       )
     ) {
       return;
     }
     setFileBusy(true);
     try {
-      const { model, assets } = await buildSampleRig();
+      const { model, assets } = await sample.build();
       // null filePath — sample is in-memory only until the user explicitly
       // saves it; matches the "fresh document" semantics the user expects
       // for a starter rig.
       loadAvatar(model, assets, null);
-      flashStatus("Loaded sample rig — try typing or speaking");
+      flashStatus(`Loaded ${sample.name} sample`);
     } catch (err) {
       console.error("Sample rig load failed:", err);
       flashStatus(
@@ -187,6 +191,33 @@ export function Toolbar() {
       setFileBusy(false);
     }
   };
+
+  // Close the sample menu on outside click / Esc. Same pattern as the
+  // mic / webcam / settings popovers — defer one frame so the click
+  // that opened the menu doesn't immediately close it.
+  useEffect(() => {
+    if (!showSampleMenu) return;
+    const onClick = (e: MouseEvent) => {
+      if (
+        sampleMenuRef.current &&
+        !sampleMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowSampleMenu(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowSampleMenu(false);
+    };
+    const id = requestAnimationFrame(() => {
+      document.addEventListener("mousedown", onClick);
+      document.addEventListener("keydown", onKey);
+    });
+    return () => {
+      cancelAnimationFrame(id);
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showSampleMenu]);
 
   const handleSaveAs = async () => {
     if (isFileBusy) return;
@@ -330,15 +361,35 @@ export function Toolbar() {
         Open
       </button>
 
-      <button
-        className="tool-btn"
-        onClick={handleLoadSample}
-        disabled={isFileBusy}
-        title="Load a sample rig — multi-sprite Bongo Cat-style avatar with regions / bindings / animations pre-wired. Type on letter keys or speak to see it react."
-      >
-        <Sparkles size={14} />
-        Sample
-      </button>
+      <div className="sample-menu-wrap" ref={sampleMenuRef}>
+        <button
+          className="tool-btn"
+          onClick={() => setShowSampleMenu((v) => !v)}
+          disabled={isFileBusy}
+          title="Load a pre-wired sample rig — exercises a different slice of the rigging stack each. Click to choose."
+        >
+          <Sparkles size={14} />
+          Sample
+          <ChevronDown size={12} />
+        </button>
+
+        {showSampleMenu && (
+          <div className="sample-menu" role="menu">
+            {SAMPLES.map((sample) => (
+              <button
+                key={sample.id}
+                role="menuitem"
+                className="sample-menu-item"
+                onClick={() => handleLoadSample(sample)}
+                disabled={isFileBusy}
+              >
+                <div className="sample-menu-name">{sample.name}</div>
+                <div className="sample-menu-desc">{sample.description}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <button
         className="tool-btn"
@@ -374,7 +425,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 7 — clipping</span>
+      <span className="status">Phase 8a — pose bindings</span>
 
       <button
         className="tool-btn icon-only toolbar-settings-btn"
