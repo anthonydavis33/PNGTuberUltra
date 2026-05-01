@@ -36,6 +36,7 @@ export function Properties() {
   const updateSpriteTransform = useAvatar((s) => s.updateSpriteTransform);
   const updateSpriteAnchor = useAvatar((s) => s.updateSpriteAnchor);
   const setSpriteSheet = useAvatar((s) => s.setSpriteSheet);
+  const setSpriteClipBy = useAvatar((s) => s.setSpriteClipBy);
   const addBinding = useAvatar((s) => s.addBinding);
   const removeBinding = useAvatar((s) => s.removeBinding);
   const updateBinding = useAvatar((s) => s.updateBinding);
@@ -351,6 +352,42 @@ export function Properties() {
             to slice it into animation frames.
           </p>
         )}
+      </section>
+
+      {/* ============= CLIPPING ============= */}
+      <section className="properties-section">
+        <div className="properties-section-header">
+          <span>Clipping</span>
+        </div>
+        <div className="clipping-row">
+          <span className="clipping-label">Show only inside</span>
+          <select
+            className="clipping-picker"
+            value={sprite.clipBy ?? ""}
+            onChange={(e) =>
+              setSpriteClipBy(
+                sprite.id,
+                e.target.value === "" ? undefined : e.target.value,
+              )
+            }
+            title="Pick another sprite to clip this one against. The clipped sprite renders only where the chosen sprite has alpha > 0 — useful for eyes-within-head, mouth-within-face, lens-tint-within-glasses rigs."
+          >
+            <option value="">— None —</option>
+            {model.sprites
+              .filter((s) => s.id !== sprite.id)
+              .map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+          </select>
+        </div>
+        {sprite.clipBy &&
+          !model.sprites.find((s) => s.id === sprite.clipBy) && (
+            <p className="empty clipping-warning">
+              Mask sprite no longer exists — clipping is currently a no-op.
+            </p>
+          )}
       </section>
 
       {/* ============= BINDINGS ============= */}

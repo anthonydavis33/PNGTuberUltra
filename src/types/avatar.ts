@@ -49,6 +49,22 @@ export interface Sprite {
    *  bodies override the frame index, beating frame bindings. Optional;
    *  most sprites won't have any. */
   animations?: Animation[];
+  /**
+   * When set, this sprite renders only where the referenced mask sprite
+   * has alpha > 0. Pixi 8 alpha-based sprite masking: the mask sprite is
+   * still positioned/transformed/animated normally — its current alpha
+   * map at render time defines the clip region, so a head-shape mask
+   * with idle bobbing tracks correctly through animations.
+   *
+   * The mask sprite stays in the render tree and is drawn to screen as
+   * usual; if you want a "purely a mask" sprite (invisible shape that
+   * only clips other sprites), set its `visible` to false — Pixi's mask
+   * pipeline still uses its alpha for clipping.
+   *
+   * Self-reference is silently ignored. Reference to a missing sprite
+   * id is also a no-op (helpful when copy-pasting between avatars).
+   */
+  clipBy?: SpriteId;
 }
 
 // ---------------------------------------------------------------- Sprite Sheet

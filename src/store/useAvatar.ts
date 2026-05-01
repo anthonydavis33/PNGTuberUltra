@@ -69,6 +69,11 @@ interface AvatarStore {
   /** Set or clear a sprite's sprite-sheet config. Pass undefined to disable
    *  sheet animation; pass an object to enable / replace. */
   setSpriteSheet: (id: SpriteId, sheet: SpriteSheet | undefined) => void;
+  /** Set or clear which sprite this one is alpha-clipped against. Pass
+   *  undefined to disable clipping. Self-references are silently
+   *  swallowed — they'd be a no-op at render time anyway and tend to
+   *  happen via UI bugs. */
+  setSpriteClipBy: (id: SpriteId, clipBy: SpriteId | undefined) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
   removeSprite: (id: SpriteId) => void;
   /** Reorder a sprite within the model array (which is render z-order:
@@ -205,6 +210,20 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         sprites: state.model.sprites.map((s) =>
           s.id === id ? { ...s, sheet } : s,
         ),
+      },
+    })),
+
+  setSpriteClipBy: (id, clipBy) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== id) return s;
+          // Self-reference is silently ignored — it'd be a no-op at
+          // render time anyway and is almost always a UI mistake.
+          if (clipBy === id) return s;
+          return { ...s, clipBy };
+        }),
       },
     })),
 

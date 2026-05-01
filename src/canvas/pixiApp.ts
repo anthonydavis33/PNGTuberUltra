@@ -62,6 +62,26 @@ export class PixiApp {
    *  neutral). Auto-advance only kicks in when no frame binding exists at
    *  all; otherwise the rig should be deterministic. */
   private readonly lastBoundFrame = new Map<string, number>();
+  /** Invisible mirror sprites used as mask targets so the original mask
+   *  source stays rendering as itself.
+   *
+   *  Pixi 8's default Container.mask consumes the mask container — once
+   *  assigned, Pixi pulls it out of the normal render pass and uses it
+   *  only as the alpha-clip shape. The standard rigging convention
+   *  (Photoshop / Live2D / Procreate) is the opposite: the mask layer
+   *  keeps showing as itself, with the clipped layer rendering only
+   *  over it.
+   *
+   *  We resolve this by giving each clipped sprite its own invisible
+   *  clone of the mask source. The clone is set as Pixi's mask target;
+   *  the original source renders normally. Each tick we mirror the
+   *  source's current rendered state (texture + transform + alpha) onto
+   *  the clone so the clip region tracks any bindings / modifiers /
+   *  animations / sheet swaps on the mask source.
+   *
+   *  Keyed by the CLIPPED sprite's id (each clipped sprite gets its
+   *  own clone). */
+  private readonly maskClones = new Map<string, PixiSprite>();
   private dragState: { id: string; lastX: number; lastY: number } | null = null;
   private destroyed = false;
   private placeholderTexture: Texture | null = null;
@@ -168,6 +188,9 @@ export class PixiApp {
     this.spriteMap.clear();
     this.spriteAssetMap.clear();
     this.lastBoundFrame.clear();
+    // Mask clones are children of `world`; app.destroy(true, {children}) above
+    // already destroyed them. Just drop our references.
+    this.maskClones.clear();
     this.placeholderTexture = null;
     this.dragState = null;
   }
@@ -210,6 +233,15 @@ export class PixiApp {
         this.spriteAssetMap.delete(id);
         this.disposeSheet(id);
         this.lastBoundFrame.delete(id);
+        // Drop any mask clone associated with this clipped sprite. If
+        // OTHER sprites were referencing this id as a mask source, the
+        // mask-sync pass below will see ms.clipBy resolves to nothing
+        // and clean up their clones too.
+        const clone = this.maskClones.get(id);
+        if (clone) {
+          clone.destroy();
+          this.maskClones.delete(id);
+        }
       }
     }
 
@@ -218,6 +250,46 @@ export class PixiApp {
       const sprite = this.spriteMap.get(modelSprites[i].id);
       if (sprite && this.world.getChildIndex(sprite) !== i) {
         this.world.setChildIndex(sprite, i);
+      }
+    }
+
+    // Sync clipping via the clone pattern (see maskClones field comment
+    // for rationale). Done in a second pass after every sprite exists in
+    // spriteMap so clipBy references resolve regardless of array order.
+    for (const ms of modelSprites) {
+      const sprite = this.spriteMap.get(ms.id);
+      if (!sprite) continue;
+
+      // Self-reference and missing-id both mean "no mask" — fall back
+      // to the cleanup path so any prior clone gets disposed.
+      const maskSourceId =
+        ms.clipBy && ms.clipBy !== ms.id && this.spriteMap.has(ms.clipBy)
+          ? ms.clipBy
+          : null;
+
+      if (maskSourceId) {
+        let clone = this.maskClones.get(ms.id);
+        if (!clone) {
+          // Lazy-create. New PixiSprite() with no texture starts as
+          // EMPTY which won't mask anything; we'll assign texture +
+          // transform in the per-frame sync below before any render.
+          clone = new PixiSprite();
+          // renderable=false means Pixi skips drawing the clone in the
+          // normal scene pass, but it stays in the tree so it can be
+          // used as a mask target. visible=true is fine because
+          // renderable controls actual draw output.
+          clone.renderable = false;
+          this.world.addChild(clone);
+          this.maskClones.set(ms.id, clone);
+        }
+        if (sprite.mask !== clone) sprite.mask = clone;
+      } else {
+        if (sprite.mask) sprite.mask = null;
+        const clone = this.maskClones.get(ms.id);
+        if (clone) {
+          clone.destroy();
+          this.maskClones.delete(ms.id);
+        }
       }
     }
   }
@@ -455,6 +527,31 @@ export class PixiApp {
       pixiSprite.alpha = t.alpha;
 
       if (ms.id === selectedId) selectedTransform = t;
+    }
+
+    // Sync mask clones AFTER all sprites have their post-binding /
+    // post-modifier transforms applied above. The clone mirrors the
+    // mask source's CURRENT rendered state so the clip region tracks
+    // animations / bindings / sheet swaps frame-perfectly. Texture is
+    // also mirrored so a sheet-frame swap on the mask source updates
+    // the clip shape (e.g. closed-eye-shape mask cycling through blink
+    // frames clips visible eye correctly throughout).
+    for (const [clippedId, clone] of this.maskClones) {
+      const ms = sprites.find((s) => s.id === clippedId);
+      if (!ms || !ms.clipBy) continue;
+      const source = this.spriteMap.get(ms.clipBy);
+      if (!source) continue;
+      clone.texture = source.texture;
+      clone.x = source.x;
+      clone.y = source.y;
+      clone.rotation = source.rotation;
+      clone.scale.copyFrom(source.scale);
+      clone.anchor.copyFrom(source.anchor);
+      // Copy the source's alpha so a translucent mask produces
+      // translucent clipping (matches Photoshop's "alpha-as-mask"
+      // semantics). If you want hard binary clipping, make the mask
+      // shape opaque.
+      clone.alpha = source.alpha;
     }
 
     // Anchor crosshair tracks the selected sprite's effective pivot. The
