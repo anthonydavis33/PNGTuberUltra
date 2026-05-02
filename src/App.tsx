@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { LogOut } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { Toolbar } from "./panels/Toolbar";
 import { LayerTree } from "./panels/LayerTree";
 import { Properties } from "./panels/Properties";
@@ -31,6 +32,26 @@ export default function App() {
         console.error("[App] setTitle failed:", err),
       );
   }, [currentFilePath]);
+
+  // Tray menu's "Toggle pause input" item emits this event from Rust;
+  // we toggle the JS-side setting so the tray and the in-app Privacy
+  // toggle stay in sync. The Tauri webview can lose this listener if
+  // the window is destroyed and recreated, so re-subscribe on every
+  // mount even though Rust only ever emits once per click.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("tray-toggle-pause", () => {
+      const cur = useSettings.getState().inputPaused;
+      useSettings.getState().setInputPaused(!cur);
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err) => {
+        console.error("[tray] failed to subscribe:", err);
+      });
+    return () => unlisten?.();
+  }, []);
 
   // Ctrl/Cmd+Shift+F toggles stream mode. Skipped while focus is on
   // text inputs so the shortcut doesn't fight with people typing F into

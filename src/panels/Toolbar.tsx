@@ -425,7 +425,7 @@ export function Toolbar() {
 
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 9c — global keyboard</span>
+      <span className="status">Phase 9d — tray + privacy</span>
 
       <button
         className="tool-btn icon-only toolbar-settings-btn"

@@ -7,11 +7,22 @@
 // double-fire when the window has focus AND the global listener is
 // also seeing the same physical press.
 //
-// Privacy:
-//   - Only key identity is published (e.g. "a", "Space"), never typed strings.
-//   - Nothing is logged to disk.
-//   - Listener skips events when focus is on a text input — protects e.g.
-//     the threshold name field in the mic popover from triggering hotkeys.
+// Privacy contract (audited at 9d):
+//   - normalizeKey() returns key IDENTITY only ("a", "Space",
+//     "ArrowUp"). It never returns the keyboard event's `key` value
+//     longer than one character without normalizing — typed text
+//     content is never reachable from a single keydown.
+//   - The processor publishes that identity to the InputBus on the
+//     KeyEvent / KeyDown / KeyRegion channels. None of those channels
+//     are persisted; .pnxr files contain avatar config only.
+//   - No console / file / network logging of input content anywhere
+//     in this module or KeyboardProcessor.
+//   - Listener skips events when focus is on a text input — so when
+//     the user is typing into an avatar config field, those events
+//     don't reach the bus at all. The global-hook source has no DOM
+//     target so this guard doesn't apply to it; the master
+//     inputPaused setting is the equivalent privacy lever for users
+//     who want global hooks but need to type private text.
 
 import { isTypingInTextInput } from "../utils/dom";
 import {

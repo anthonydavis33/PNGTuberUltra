@@ -1,6 +1,6 @@
 // PNGTuberUltra — Tauri backend.
 //
-// Surface area (phase 9c):
+// Surface area:
 //   - greet command: leftover scaffold, kept for now.
 //   - set_global_input_enabled command: toggles global keyboard
 //     listening via rdev. Spawns a listener thread on first enable;
@@ -8,11 +8,24 @@
 //     (e.g. macOS without Accessibility permission) come back as
 //     "global-input-error" events so the JS layer can fall back to
 //     local listeners and surface a hint.
+//   - System tray (build_tray): show window / toggle pause / quit.
+//
+// Privacy contract (audited at 9d):
+//   - rdev events are translated to key IDENTITY strings only via
+//     key_to_string ("a", "Space", "ArrowUp"). The Key enum's debug
+//     formatting is the fallback for unmapped variants — also pure
+//     identity ("F23", "KpEnter"), never typed content.
+//   - eprintln! sites log errors only, never key/mouse content.
+//   - No file or network IO of input data anywhere in this module.
+//   - emit() pushes the identity payload to JS where the bus carries
+//     it; no Tauri-side persistence.
 
 use rdev::{listen, EventType, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use tauri::{AppHandle, Emitter};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager};
 
 // Whether global input emission is currently active. Flipped by the
 // JS side's set_global_input_enabled command. The listener thread
@@ -221,6 +234,67 @@ fn key_to_string(key: &Key) -> String {
     s.to_string()
 }
 
+/// Build a system tray icon with quick-action menu items. Phase 9d.
+///
+/// Items:
+///   - "Show window"    — unminimize + focus the main window. Useful
+///                        when the user has minimized the app while
+///                        streaming and wants to bring it back.
+///   - "Toggle pause"   — emits a tray-toggle-pause event the JS side
+///                        listens for; JS flips the inputPaused
+///                        setting. We intentionally keep the menu
+///                        text static (not "Pause" / "Resume" based
+///                        on state) because Tauri 2 menu-item label
+///                        updates require explicit relabel calls,
+///                        and the JS side knows the current state.
+///   - "Quit"           — exits the app.
+///
+/// The tray icon is always-on while the app runs; users can hide it
+/// in the OS tray-settings if they don't want it visible. We don't
+/// hijack the window close button to minimize-to-tray — that's a
+/// separate UX choice that deserves its own toggle.
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, "tray-show", "Show window", true, None::<&str>)?;
+    let pause_item =
+        MenuItem::with_id(app, "tray-toggle-pause", "Toggle pause input", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit_item = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
+
+    let menu = Menu::with_items(app, &[&show_item, &pause_item, &separator, &quit_item])?;
+
+    let _tray = TrayIconBuilder::new()
+        .icon(
+            app.default_window_icon()
+                .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?
+                .clone(),
+        )
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "tray-show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "tray-toggle-pause" => {
+                // Defer the actual toggle to JS so the user-facing
+                // setting (useSettings.inputPaused) stays the source
+                // of truth. JS subscribes to this event and flips
+                // the setter.
+                let _ = app.emit("tray-toggle-pause", ());
+            }
+            "tray-quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -228,6 +302,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![greet, set_global_input_enabled])
+        .setup(|app| {
+            // Tray failures shouldn't crash the app — log + continue.
+            // Streamers without a tray-supporting OS still get the
+            // full editor.
+            if let Err(e) = build_tray(app.handle()) {
+                eprintln!("[tray] failed to build: {:?}", e);
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
