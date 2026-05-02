@@ -209,13 +209,12 @@ function StreamingSection() {
       </label>
 
       <GlobalKeyboardToggle />
+      <GlobalMouseToggle />
     </section>
   );
 }
 
-/** Toggle for the OS-level keyboard hook. Pulled out so the macOS
- *  permission hint can render conditionally without polluting the
- *  parent. */
+/** Toggle for the OS-level keyboard hook. */
 function GlobalKeyboardToggle() {
   const globalKeyboardEnabled = useSettings((s) => s.globalKeyboardEnabled);
   const setGlobalKeyboardEnabled = useSettings(
@@ -240,6 +239,37 @@ function GlobalKeyboardToggle() {
           → Privacy &amp; Security → Accessibility. Linux Wayland:
           may not work due to protocol restrictions. If startup fails
           we'll log the error and fall back to local listeners.
+        </div>
+      </div>
+    </label>
+  );
+}
+
+/** Toggle for the OS-level mouse hook. Buttons + wheel + screen
+ *  position route through Rust when on; canvas-relative MouseX/Y stay
+ *  local for editor preview. */
+function GlobalMouseToggle() {
+  const globalMouseEnabled = useSettings((s) => s.globalMouseEnabled);
+  const setGlobalMouseEnabled = useSettings((s) => s.setGlobalMouseEnabled);
+
+  return (
+    <label
+      className={`settings-radio ${globalMouseEnabled ? "active" : ""}`}
+      title="Mouse buttons + wheel + screen-relative position come from the OS-level hook so rigs respond while the user is in-game. Adds MouseScreenX / MouseScreenY channels (-1..1 over the primary monitor). MouseX / MouseY stay canvas-relative for the editor."
+    >
+      <input
+        type="checkbox"
+        checked={globalMouseEnabled}
+        onChange={(e) => setGlobalMouseEnabled(e.target.checked)}
+      />
+      <div className="settings-radio-body">
+        <div className="settings-radio-label">Global mouse hook</div>
+        <div className="settings-radio-hint">
+          Buttons / wheel / cursor work while window is unfocused.
+          Adds MouseScreenX / MouseScreenY channels (screen-normalized
+          over the primary monitor) for transform bindings; MouseX /
+          MouseY remain canvas-relative. Same macOS Accessibility +
+          Wayland caveats as the keyboard hook.
         </div>
       </div>
     </label>

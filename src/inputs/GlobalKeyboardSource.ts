@@ -22,7 +22,6 @@
 // On any error, Rust emits "global-input-error" with a message; we
 // log it and let the coordinator handle fallback to local.
 
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { keyboardProcessor } from "./keyboardProcessor";
 import { useSettings } from "../store/useSettings";
@@ -53,11 +52,11 @@ class GlobalKeyboardSource {
     return this.lastError;
   }
 
-  /** Start listening. Subscribes to Tauri events FIRST so we don't
-   *  miss anything from a fast Rust side, then invokes the toggle.
-   *  Throws if invoke() fails (e.g. command not registered, or Rust
-   *  listener spawn errors immediately). The coordinator catches and
-   *  falls back to local. */
+  /** Start subscribing to global-key events from Rust. Doesn't call
+   *  set_global_input_enabled itself — that's the coordinator's job
+   *  since both keyboard and mouse global sources share the same
+   *  Rust listener thread, and the listener should run whenever
+   *  EITHER is on (and only stop when BOTH are off). */
   async start(): Promise<void> {
     if (this.active) return;
 
@@ -75,41 +74,15 @@ class GlobalKeyboardSource {
       (e) => {
         this.lastError = e.payload.message;
         console.error("[global-keyboard] error:", e.payload.message);
-        // Auto-disable on error — Rust has already cleared its flags,
-        // we need to mirror locally so the next start() actually
-        // re-spawns. The user-facing setting stays on (true) so the
-        // coordinator's effect re-fires; on retry we'll succeed if
-        // they've fixed permissions, or fail again with the same
-        // error otherwise.
         this.active = false;
       },
     );
 
-    try {
-      await invoke("set_global_input_enabled", { enabled: true });
-      this.active = true;
-      this.lastError = null;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.lastError = msg;
-      await this.cleanupListeners();
-      throw new Error(`Global keyboard hook failed to start: ${msg}`);
-    }
+    this.active = true;
+    this.lastError = null;
   }
 
   async stop(): Promise<void> {
-    if (!this.active) {
-      // Even if not "active" by our flag, listeners may have been
-      // attached from a previous half-completed start. Clean up
-      // defensively so retries are reliable.
-      await this.cleanupListeners();
-      return;
-    }
-    try {
-      await invoke("set_global_input_enabled", { enabled: false });
-    } catch (err) {
-      console.error("[global-keyboard] stop failed:", err);
-    }
     await this.cleanupListeners();
     // Clear any stuck "held" state from before the swap — the local
     // source taking over (or no source, if user is just disabling)

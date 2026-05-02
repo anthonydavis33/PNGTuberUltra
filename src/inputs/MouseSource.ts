@@ -37,6 +37,13 @@ export const MOUSE_CHANNELS = [
   "MouseMiddle",
   "MouseInside",
   "MouseWheel",
+  // Phase 9g — published by GlobalMouseSource when globalMouseEnabled
+  // is on. Screen-normalized to [-1, 1] over the primary monitor;
+  // distinct from MouseX/Y (canvas-relative) so existing rigs that
+  // bind to MouseX/Y don't change behavior when the user toggles
+  // global mode.
+  "MouseScreenX",
+  "MouseScreenY",
 ] as const;
 
 /** How long after a wheel event MouseWheel auto-clears to 0. Long enough
@@ -133,6 +140,12 @@ class MouseSource {
 
   private onDown = (e: MouseEvent): void => {
     if (useSettings.getState().inputPaused) return;
+    // When global mouse is on, button events come from the global
+    // source so the local listener stops publishing buttons (avoids
+    // double-fire while the window has focus). Position still
+    // publishes locally — the canvas-relative MouseX/Y is editor
+    // context the global source can't replace.
+    if (useSettings.getState().globalMouseEnabled) return;
     // MouseEvent.button: 0 = left, 1 = middle, 2 = right.
     if (e.button === 0) {
       this.buttons.left = true;
@@ -168,6 +181,7 @@ class MouseSource {
    */
   publishWheel(deltaY: number): void {
     if (useSettings.getState().inputPaused) return;
+    if (useSettings.getState().globalMouseEnabled) return;
     inputBus.publish("MouseWheel", deltaY);
     if (this.wheelClearTimer !== null) {
       window.clearTimeout(this.wheelClearTimer);

@@ -85,6 +85,16 @@ interface SettingsState {
    *  background shows through (typically black). */
   transparentWindow: boolean;
   setTransparentWindow: (enabled: boolean) => void;
+  /** When true, mouse buttons + wheel + screen position come from
+   *  the OS-level global hook instead of window-scoped DOM events.
+   *  Lets rigs follow the cursor / react to clicks while the user is
+   *  in their game. Adds two new bus channels (MouseScreenX /
+   *  MouseScreenY, screen-normalized [-1, 1] over the primary
+   *  monitor); existing MouseX / MouseY stay canvas-relative for
+   *  editor preview. Like globalKeyboardEnabled, default off because
+   *  macOS requires Accessibility permission. */
+  globalMouseEnabled: boolean;
+  setGlobalMouseEnabled: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -111,6 +121,9 @@ export const useSettings = create<SettingsState>()(
       transparentWindow: false,
       setTransparentWindow: (enabled) =>
         set({ transparentWindow: enabled }),
+      globalMouseEnabled: false,
+      setGlobalMouseEnabled: (enabled) =>
+        set({ globalMouseEnabled: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

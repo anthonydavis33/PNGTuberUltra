@@ -17,9 +17,11 @@ import {
   MicOff,
   Settings,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { getMicSource } from "../inputs/MicSource";
 import { getKeyboardSource } from "../inputs/KeyboardSource";
 import { getGlobalKeyboardSource } from "../inputs/GlobalKeyboardSource";
+import { getGlobalMouseSource } from "../inputs/GlobalMouseSource";
 import { getWebcamSource } from "../inputs/WebcamSource";
 import { getLipsyncSource } from "../inputs/LipsyncSource";
 import { getMouseSource } from "../inputs/MouseSource";
@@ -39,6 +41,8 @@ export function StatusBar() {
   const setGlobalKeyboardEnabled = useSettings(
     (s) => s.setGlobalKeyboardEnabled,
   );
+  const globalMouseEnabled = useSettings((s) => s.globalMouseEnabled);
+  const setGlobalMouseEnabled = useSettings((s) => s.setGlobalMouseEnabled);
 
   const [isMicRunning, setIsMicRunning] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
@@ -62,19 +66,31 @@ export function StatusBar() {
     getMicSource(useAvatar.getState().getMicConfig());
     getKeyboardSource();
     getGlobalKeyboardSource();
+    getGlobalMouseSource();
     getMouseSource();
     getWebcamSource();
     getLipsyncSource();
     return null;
   });
 
+  // Rust listener toggle: ON whenever EITHER global keyboard or
+  // global mouse needs it; OFF only when both are disabled. The
+  // command is cheap to call repeatedly (Rust ignores duplicate
+  // enable; spawned thread persists for the life of the process)
+  // so re-firing on every settings change is fine.
+  useEffect(() => {
+    const wantGlobal = globalKeyboardEnabled || globalMouseEnabled;
+    invoke("set_global_input_enabled", { enabled: wantGlobal }).catch(
+      (err) => {
+        console.error("[global-input] Rust toggle failed:", err);
+      },
+    );
+  }, [globalKeyboardEnabled, globalMouseEnabled]);
+
   // Keyboard source coordinator: exactly one of {local, global} is
-  // active at a time so focused-window presses don't double-fire (both
-  // sources would see the same physical press otherwise). On
-  // globalKeyboardEnabled change, swap. If global fails to start
-  // (macOS without Accessibility, Wayland, etc.), fall back to local
-  // and flip the setting back off so the user can retry after
-  // granting permissions.
+  // active at a time so focused-window presses don't double-fire.
+  // Same fail-safe pattern as before — on global startup error, log
+  // and fall back to local + flip the setting off.
   useEffect(() => {
     const local = getKeyboardSource();
     const global = getGlobalKeyboardSource();
@@ -82,19 +98,15 @@ export function StatusBar() {
     let cancelled = false;
     if (globalKeyboardEnabled) {
       local.stop();
-      global
-        .start()
-        .catch((err) => {
-          if (cancelled) return;
-          console.error(
-            "[keyboard] global hook failed, falling back to local:",
-            err,
-          );
-          // Flip setting off + restart local so the user can retry
-          // after fixing permissions.
-          setGlobalKeyboardEnabled(false);
-          local.start();
-        });
+      global.start().catch((err) => {
+        if (cancelled) return;
+        console.error(
+          "[keyboard] global hook failed, falling back to local:",
+          err,
+        );
+        setGlobalKeyboardEnabled(false);
+        local.start();
+      });
     } else {
       void global.stop();
       local.start();
@@ -103,6 +115,29 @@ export function StatusBar() {
       cancelled = true;
     };
   }, [globalKeyboardEnabled, setGlobalKeyboardEnabled]);
+
+  // Mouse coordinator. Local source keeps publishing canvas-relative
+  // position regardless (the editor needs that for sprite drag etc.);
+  // global takes over buttons + wheel + screen position.
+  useEffect(() => {
+    const global = getGlobalMouseSource();
+    let cancelled = false;
+    if (globalMouseEnabled) {
+      global.start().catch((err) => {
+        if (cancelled) return;
+        console.error(
+          "[mouse] global hook failed, falling back to local:",
+          err,
+        );
+        setGlobalMouseEnabled(false);
+      });
+    } else {
+      void global.stop();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [globalMouseEnabled, setGlobalMouseEnabled]);
 
   const volume = useInputValue<number>("MicVolume") ?? 0;
   const state = useInputValue<string | null>("MicState");

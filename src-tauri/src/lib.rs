@@ -20,7 +20,7 @@
 //   - emit() pushes the identity payload to JS where the bus carries
 //     it; no Tauri-side persistence.
 
-use rdev::{listen, EventType, Key};
+use rdev::{listen, Button, EventType, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -47,6 +47,20 @@ static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 struct GlobalKeyPayload {
     key: String,
     pressed: bool,
+}
+
+/// Discriminated payload for all mouse events. Kind is "move", "down",
+/// "up", or "wheel"; the relevant other fields are populated per kind.
+/// Single payload type keeps the JS handler one switch instead of N
+/// separate listeners.
+#[derive(Clone, serde::Serialize)]
+struct GlobalMousePayload {
+    kind: String,
+    button: Option<String>,
+    x: Option<f64>,
+    y: Option<f64>,
+    #[serde(rename = "deltaY")]
+    delta_y: Option<f64>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -117,12 +131,59 @@ fn set_global_input_enabled(app: AppHandle, enabled: bool) -> Result<(), String>
                             },
                         );
                     }
-                    // Mouse events deliberately ignored for 9c —
-                    // global mouse adds canvas-relative coord
-                    // questions (the position the rig sees vs the
-                    // position the OS cursor is at) that deserve their
-                    // own design pass.
-                    _ => {}
+                    EventType::MouseMove { x, y } => {
+                        let _ = listen_handle.emit(
+                            "global-mouse",
+                            GlobalMousePayload {
+                                kind: "move".to_string(),
+                                button: None,
+                                x: Some(x),
+                                y: Some(y),
+                                delta_y: None,
+                            },
+                        );
+                    }
+                    EventType::ButtonPress(button) => {
+                        let _ = listen_handle.emit(
+                            "global-mouse",
+                            GlobalMousePayload {
+                                kind: "down".to_string(),
+                                button: Some(button_to_string(&button)),
+                                x: None,
+                                y: None,
+                                delta_y: None,
+                            },
+                        );
+                    }
+                    EventType::ButtonRelease(button) => {
+                        let _ = listen_handle.emit(
+                            "global-mouse",
+                            GlobalMousePayload {
+                                kind: "up".to_string(),
+                                button: Some(button_to_string(&button)),
+                                x: None,
+                                y: None,
+                                delta_y: None,
+                            },
+                        );
+                    }
+                    EventType::Wheel { delta_y, .. } => {
+                        // delta_y from rdev is signed (negative = up,
+                        // positive = down), already matches DOM
+                        // WheelEvent.deltaY convention. We ignore
+                        // delta_x for now — horizontal wheel is rare
+                        // and adds a channel few rigs would use.
+                        let _ = listen_handle.emit(
+                            "global-mouse",
+                            GlobalMousePayload {
+                                kind: "wheel".to_string(),
+                                button: None,
+                                x: None,
+                                y: None,
+                                delta_y: Some(delta_y as f64),
+                            },
+                        );
+                    }
                 }
             });
             if let Err(e) = result {
@@ -143,6 +204,22 @@ fn set_global_input_enabled(app: AppHandle, enabled: bool) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Translate rdev's Button enum to "left" / "right" / "middle" /
+/// debug-format. Matches the channel-name convention in MouseSource.ts
+/// (which publishes MouseLeft / MouseRight / MouseMiddle); the JS
+/// global mouse bridge maps this string back to the channel.
+fn button_to_string(button: &Button) -> String {
+    match button {
+        Button::Left => "left".to_string(),
+        Button::Right => "right".to_string(),
+        Button::Middle => "middle".to_string(),
+        // Side buttons / unknown — debug formatting so the user can
+        // at least see what fired and decide whether to bind to it.
+        // Won't match any of our canonical channels.
+        _ => format!("{:?}", button).to_lowercase(),
+    }
 }
 
 /// Translate rdev's Key enum to a string compatible with the
