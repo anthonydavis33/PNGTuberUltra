@@ -21,6 +21,7 @@
 
 import { inputBus } from "./InputBus";
 import { isTypingInTextInput } from "../utils/dom";
+import { useSettings } from "../store/useSettings";
 import {
   type Hotkey,
   type KeyboardConfig,
@@ -80,6 +81,10 @@ class KeyboardSource {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (isTypingInTextInput(e.target)) return;
+    // Respect the master input-pause toggle. We still update keysHeld
+    // tracking via early-return below — that's just deduping native
+    // OS auto-repeat and isn't published to the bus.
+    if (useSettings.getState().inputPaused) return;
 
     const key = normalizeKey(e);
     if (this.keysHeld.has(key)) return; // OS auto-repeat

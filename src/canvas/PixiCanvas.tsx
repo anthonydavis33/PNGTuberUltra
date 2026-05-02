@@ -157,6 +157,18 @@ export function PixiCanvas() {
     appRef.current?.setBackgroundColor(chromaKeyColor);
   }, [chromaKeyColor]);
 
+  // Auto-pause the Pixi ticker when the document is hidden (window
+  // minimized, tab in background, system locked, etc.). Inputs may
+  // still fire (mic + webcam keep running), but we don't waste CPU
+  // re-rendering an avatar nobody can see. Resumes on visible.
+  useEffect(() => {
+    const onVis = () => {
+      appRef.current?.setPaused(document.hidden);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
   // Push active-pose-binding changes (the pivot dot's edit target)
   // into Pixi. The toggle button on a PoseBindingRow updates the
   // useEditor store; this effect mirrors that into PixiApp so the

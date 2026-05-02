@@ -43,6 +43,15 @@ interface SettingsState {
    *  obscures most of the canvas). */
   chromaKeyColor: string;
   setChromaKeyColor: (color: string) => void;
+  /** Master kill switch for keyboard + mouse listening. When true,
+   *  KeyboardSource and MouseSource short-circuit — no events fire,
+   *  no channels publish, no bindings/animations react. Mic and
+   *  webcam are NOT affected (they have their own toggles in the
+   *  StatusBar; the user explicitly enabled those and probably wants
+   *  to keep them running for streaming). Useful as a privacy
+   *  pause-button while typing passwords / doing private work. */
+  inputPaused: boolean;
+  setInputPaused: (paused: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -57,6 +66,10 @@ export const useSettings = create<SettingsState>()(
       setStreamMode: (on) => set({ streamMode: on }),
       chromaKeyColor: "#00ff00",
       setChromaKeyColor: (color) => set({ chromaKeyColor: color }),
+      // Default OFF — input listening on by default, user opts INTO
+      // pausing rather than having to opt out every session.
+      inputPaused: false,
+      setInputPaused: (paused) => set({ inputPaused: paused }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

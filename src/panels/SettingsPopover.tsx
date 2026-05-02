@@ -117,6 +117,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
       </section>
 
       <StreamingSection />
+      <PrivacySection />
     </div>
   );
 }
@@ -182,6 +183,46 @@ function StreamingSection() {
           }}
           placeholder="#00ff00"
         />
+      </label>
+    </section>
+  );
+}
+
+/** Privacy section — master kill switch for keyboard + mouse listening.
+ *  Mic / webcam have their own toggles in the StatusBar (since they
+ *  involve OS-level permissions and explicit start/stop). This is
+ *  specifically for the always-on input listeners. */
+function PrivacySection() {
+  const inputPaused = useSettings((s) => s.inputPaused);
+  const setInputPaused = useSettings((s) => s.setInputPaused);
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">Privacy</div>
+      <div className="settings-section-desc">
+        Pause keyboard + mouse listening without stopping mic / webcam.
+        Useful while typing passwords or doing private work that you
+        don't want driving the avatar.
+      </div>
+
+      <label
+        className={`settings-radio ${inputPaused ? "active" : ""}`}
+        title="When paused, KeyboardSource and MouseSource short-circuit — no events fire, no channels publish, no animations / bindings react. Mic and webcam are unaffected (manage those from the StatusBar gear icons)."
+      >
+        <input
+          type="checkbox"
+          checked={inputPaused}
+          onChange={(e) => setInputPaused(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">Pause input listening</div>
+          <div className="settings-radio-hint">
+            Keyboard + mouse only. Mic and webcam keep running (they
+            have their own toggles in the StatusBar). Persists across
+            launches — remember to turn it back off when you want the
+            rig live again.
+          </div>
+        </div>
       </label>
     </section>
   );

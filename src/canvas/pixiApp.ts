@@ -109,6 +109,11 @@ export class PixiApp {
   private readonly modifierRunner = new ModifierRunner();
   /** Wallclock time of the previous tick (in seconds), for dt computation. */
   private lastTickTime: number | null = null;
+  /** When true, the per-frame ticker no-ops. Driven by PixiCanvas in
+   *  response to document.visibilitychange — when the window is
+   *  hidden / minimized there's no point evaluating bindings or
+   *  re-rendering, so we save CPU. Resumes seamlessly on visible. */
+  private paused = false;
   /** Viewport zoom factor (1 = 100%). Multiplies world + overlays. Drag
    *  deltas divide by this so screen-pixel drags produce sensible
    *  world-unit moves regardless of zoom. Session-only — not persisted. */
@@ -519,8 +524,21 @@ export class PixiApp {
     this.host.addEventListener("wheel", this.wheelHandler, { passive: false });
   }
 
+  /** Pause / resume the per-frame ticker. While paused, tickBindings
+   *  no-ops — no binding evaluation, no modifier passes, no sprite
+   *  updates. lastTickTime is reset on resume so the dt computation
+   *  doesn't see a giant "elapsed" jump producing absurd modifier
+   *  outputs. */
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    if (!paused) {
+      this.lastTickTime = null;
+    }
+  }
+
   private tickBindings = (): void => {
-    if (this.destroyed) return;
+    if (this.destroyed || this.paused) return;
 
     const nowMs = performance.now();
     const now = nowMs / 1000;

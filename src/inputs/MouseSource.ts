@@ -27,6 +27,7 @@
 // 0,0 values before the user moves the mouse.
 
 import { inputBus } from "./InputBus";
+import { useSettings } from "../store/useSettings";
 
 export const MOUSE_CHANNELS = [
   "MouseX",
@@ -101,6 +102,7 @@ class MouseSource {
 
   private onMove = (e: MouseEvent): void => {
     if (!this.host) return;
+    if (useSettings.getState().inputPaused) return;
     // getBoundingClientRect on every move is fine — modern browsers
     // optimize it heavily, and the alternative (caching + invalidating
     // on resize/scroll) is more state for trivial gain.
@@ -130,6 +132,7 @@ class MouseSource {
   };
 
   private onDown = (e: MouseEvent): void => {
+    if (useSettings.getState().inputPaused) return;
     // MouseEvent.button: 0 = left, 1 = middle, 2 = right.
     if (e.button === 0) {
       this.buttons.left = true;
@@ -164,6 +167,7 @@ class MouseSource {
    * bindings see a clean spike, not a sticky last value.
    */
   publishWheel(deltaY: number): void {
+    if (useSettings.getState().inputPaused) return;
     inputBus.publish("MouseWheel", deltaY);
     if (this.wheelClearTimer !== null) {
       window.clearTimeout(this.wheelClearTimer);
