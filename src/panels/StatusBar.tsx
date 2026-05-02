@@ -19,10 +19,12 @@ import {
 } from "lucide-react";
 import { getMicSource } from "../inputs/MicSource";
 import { getKeyboardSource } from "../inputs/KeyboardSource";
+import { getGlobalKeyboardSource } from "../inputs/GlobalKeyboardSource";
 import { getWebcamSource } from "../inputs/WebcamSource";
 import { getLipsyncSource } from "../inputs/LipsyncSource";
 import { getMouseSource } from "../inputs/MouseSource";
 import { useAvatar } from "../store/useAvatar";
+import { useSettings } from "../store/useSettings";
 import { useInputValue } from "../hooks/useInputValue";
 import { ThresholdPopover } from "./ThresholdPopover";
 import { KeyboardPopover } from "./KeyboardPopover";
@@ -33,6 +35,10 @@ export function StatusBar() {
   const keyboardConfig = useAvatar((s) => s.model.inputs?.keyboard);
   const getMicConfig = useAvatar((s) => s.getMicConfig);
   const getKeyboardConfig = useAvatar((s) => s.getKeyboardConfig);
+  const globalKeyboardEnabled = useSettings((s) => s.globalKeyboardEnabled);
+  const setGlobalKeyboardEnabled = useSettings(
+    (s) => s.setGlobalKeyboardEnabled,
+  );
 
   const [isMicRunning, setIsMicRunning] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
@@ -49,14 +55,54 @@ export function StatusBar() {
   // source that subscribes to MicPhoneme + Viseme — must construct AFTER
   // those publish their initial null values, or its initial recompute
   // sees nothing meaningful.
+  //
+  // KeyboardSource is constructed here but NOT started — the coordinator
+  // effect below picks local vs global based on the user's setting.
   useState(() => {
     getMicSource(useAvatar.getState().getMicConfig());
     getKeyboardSource();
+    getGlobalKeyboardSource();
     getMouseSource();
     getWebcamSource();
     getLipsyncSource();
     return null;
   });
+
+  // Keyboard source coordinator: exactly one of {local, global} is
+  // active at a time so focused-window presses don't double-fire (both
+  // sources would see the same physical press otherwise). On
+  // globalKeyboardEnabled change, swap. If global fails to start
+  // (macOS without Accessibility, Wayland, etc.), fall back to local
+  // and flip the setting back off so the user can retry after
+  // granting permissions.
+  useEffect(() => {
+    const local = getKeyboardSource();
+    const global = getGlobalKeyboardSource();
+
+    let cancelled = false;
+    if (globalKeyboardEnabled) {
+      local.stop();
+      global
+        .start()
+        .catch((err) => {
+          if (cancelled) return;
+          console.error(
+            "[keyboard] global hook failed, falling back to local:",
+            err,
+          );
+          // Flip setting off + restart local so the user can retry
+          // after fixing permissions.
+          setGlobalKeyboardEnabled(false);
+          local.start();
+        });
+    } else {
+      void global.stop();
+      local.start();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [globalKeyboardEnabled, setGlobalKeyboardEnabled]);
 
   const volume = useInputValue<number>("MicVolume") ?? 0;
   const state = useInputValue<string | null>("MicState");

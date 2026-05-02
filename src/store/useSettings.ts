@@ -52,6 +52,17 @@ interface SettingsState {
    *  pause-button while typing passwords / doing private work. */
   inputPaused: boolean;
   setInputPaused: (paused: boolean) => void;
+  /** When true, keyboard input comes from the OS-level global hook
+   *  (rdev via Rust) instead of the window-scoped DOM listener. Lets
+   *  rigs react while the Tauri window is unfocused — the canonical
+   *  "PNGTuber while playing a game" workflow. Mutually exclusive
+   *  with the local source so focused-window presses don't fire twice.
+   *  Default off because (a) macOS requires Accessibility permission
+   *  the first time, which is a permission prompt the user should
+   *  consciously accept, and (b) some users prefer their input to
+   *  stay window-scoped for privacy. */
+  globalKeyboardEnabled: boolean;
+  setGlobalKeyboardEnabled: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -70,6 +81,9 @@ export const useSettings = create<SettingsState>()(
       // pausing rather than having to opt out every session.
       inputPaused: false,
       setInputPaused: (paused) => set({ inputPaused: paused }),
+      globalKeyboardEnabled: false,
+      setGlobalKeyboardEnabled: (enabled) =>
+        set({ globalKeyboardEnabled: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

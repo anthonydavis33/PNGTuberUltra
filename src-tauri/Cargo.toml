@@ -24,4 +24,14 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Cross-platform global keyboard hook for phase 9c. Listens to OS-level
+# input events so rigs react when the Tauri window is unfocused — the
+# canonical "PNGTuber while playing a game" scenario.
+#  - Windows: works out of the box.
+#  - macOS:   requires Accessibility permission (System Settings →
+#             Privacy & Security → Accessibility). Without it
+#             rdev::listen returns an error which we surface to the
+#             frontend and fall back to local listeners.
+#  - Linux:   X11 supported; Wayland is degraded (rdev limitation).
+rdev = "0.5"
 

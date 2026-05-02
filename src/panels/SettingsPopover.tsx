@@ -184,7 +184,42 @@ function StreamingSection() {
           placeholder="#00ff00"
         />
       </label>
+
+      <GlobalKeyboardToggle />
     </section>
+  );
+}
+
+/** Toggle for the OS-level keyboard hook. Pulled out so the macOS
+ *  permission hint can render conditionally without polluting the
+ *  parent. */
+function GlobalKeyboardToggle() {
+  const globalKeyboardEnabled = useSettings((s) => s.globalKeyboardEnabled);
+  const setGlobalKeyboardEnabled = useSettings(
+    (s) => s.setGlobalKeyboardEnabled,
+  );
+
+  return (
+    <label
+      className={`settings-radio ${globalKeyboardEnabled ? "active" : ""}`}
+      title="Listen to the OS-level keyboard hook so rigs react when the Tauri window doesn't have focus — typical PNGTuber 'while playing a game' setup. macOS users get an Accessibility permission prompt the first time."
+    >
+      <input
+        type="checkbox"
+        checked={globalKeyboardEnabled}
+        onChange={(e) => setGlobalKeyboardEnabled(e.target.checked)}
+      />
+      <div className="settings-radio-body">
+        <div className="settings-radio-label">Global keyboard hook</div>
+        <div className="settings-radio-hint">
+          Rigs react while window is unfocused (in-game, Discord, etc.).
+          macOS: requires Accessibility permission — System Settings
+          → Privacy &amp; Security → Accessibility. Linux Wayland:
+          may not work due to protocol restrictions. If startup fails
+          we'll log the error and fall back to local listeners.
+        </div>
+      </div>
+    </label>
   );
 }
 
