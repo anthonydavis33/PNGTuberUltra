@@ -40,6 +40,7 @@ export function PixiCanvas() {
   const registerAsset = useAvatar((s) => s.registerAsset);
   const addSprite = useAvatar((s) => s.addSprite);
   const wheelZoomMode = useSettings((s) => s.wheelZoomMode);
+  const chromaKeyColor = useSettings((s) => s.chromaKeyColor);
   const activePoseBinding = useEditor((s) => s.activePoseBinding);
 
   // Init Pixi once on mount; tear down on unmount.
@@ -111,11 +112,12 @@ export function PixiCanvas() {
       const state = useAvatar.getState();
       pixi.syncSprites(state.model.sprites, state.assets);
       pixi.setSelectedHighlight(state.selectedId);
-      // Apply current wheel-zoom mode + initial active pose binding —
-      // the dependency-tracked effects for these fire too early
-      // (before pixi.init resolves and appRef.current gets set), so we
-      // push the initial values here.
+      // Apply current settings + initial active pose binding — the
+      // dependency-tracked effects for these fire too early (before
+      // pixi.init resolves and appRef.current gets set), so we push
+      // the initial values here.
       pixi.setWheelZoomMode(useSettings.getState().wheelZoomMode);
+      pixi.setBackgroundColor(useSettings.getState().chromaKeyColor);
       pixi.setPivotEditTarget(useEditor.getState().activePoseBinding);
     });
 
@@ -147,6 +149,13 @@ export function PixiCanvas() {
   useEffect(() => {
     appRef.current?.setWheelZoomMode(wheelZoomMode);
   }, [wheelZoomMode]);
+
+  // Push chroma key color into Pixi's renderer background. Same effect
+  // pattern: react to settings changes immediately so the user sees
+  // the new color without a reload.
+  useEffect(() => {
+    appRef.current?.setBackgroundColor(chromaKeyColor);
+  }, [chromaKeyColor]);
 
   // Push active-pose-binding changes (the pivot dot's edit target)
   // into Pixi. The toggle button on a PoseBindingRow updates the

@@ -115,6 +115,74 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
           ))}
         </div>
       </section>
+
+      <StreamingSection />
     </div>
+  );
+}
+
+/** Streaming section — chroma key color picker + stream mode toggle.
+ *  Pulled into its own component because it has its own subscriptions
+ *  to stream-mode state (which the wheel section doesn't care about). */
+function StreamingSection() {
+  const streamMode = useSettings((s) => s.streamMode);
+  const setStreamMode = useSettings((s) => s.setStreamMode);
+  const chromaKeyColor = useSettings((s) => s.chromaKeyColor);
+  const setChromaKeyColor = useSettings((s) => s.setChromaKeyColor);
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">Streaming</div>
+      <div className="settings-section-desc">
+        Hide editor chrome to capture just the avatar in OBS. Use the
+        chroma color (default green) with OBS's Chroma Key filter to
+        remove the background.
+      </div>
+
+      <label
+        className={`settings-radio ${streamMode ? "active" : ""}`}
+        title="Toggle stream mode (also Ctrl+Shift+F at any time)."
+      >
+        <input
+          type="checkbox"
+          checked={streamMode}
+          onChange={(e) => setStreamMode(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">Stream mode</div>
+          <div className="settings-radio-hint">
+            Hides toolbar / panels / status bar. Toggle with
+            Ctrl+Shift+F or the floating exit button. Persists across
+            launches.
+          </div>
+        </div>
+      </label>
+
+      <label
+        className="settings-color-row"
+        title="Color rendered behind the avatar canvas. Set this to the green / magenta you want OBS Chroma Key to remove. Has no visible effect outside stream mode (editor chrome covers most of the canvas)."
+      >
+        <span className="settings-color-label">Chroma color</span>
+        <input
+          type="color"
+          className="settings-color-input"
+          value={chromaKeyColor}
+          onChange={(e) => setChromaKeyColor(e.target.value)}
+        />
+        <input
+          type="text"
+          className="settings-color-hex"
+          value={chromaKeyColor}
+          onChange={(e) => {
+            const v = e.target.value;
+            // Only persist valid #RRGGBB (matches PixiApp's parser).
+            // Allow user to type partial values; we ignore until they
+            // reach a valid hex string.
+            if (/^#[0-9a-fA-F]{6}$/.test(v)) setChromaKeyColor(v);
+          }}
+          placeholder="#00ff00"
+        />
+      </label>
+    </section>
   );
 }

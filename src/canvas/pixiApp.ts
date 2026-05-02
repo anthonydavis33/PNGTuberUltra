@@ -422,6 +422,19 @@ export class PixiApp {
     this.wheelZoomMode = mode;
   }
 
+  /** Update the renderer background to the given hex color. Driven by
+   *  the chromaKeyColor setting so OBS chroma-key users can match the
+   *  app's canvas color to their filter's keyed-out shade. Silently
+   *  no-ops if the input isn't a valid #RRGGBB string. */
+  setBackgroundColor(hexString: string): void {
+    if (!this.app.renderer) return;
+    const cleaned = hexString.replace(/^#/, "").trim();
+    if (cleaned.length !== 6) return;
+    const num = parseInt(cleaned, 16);
+    if (Number.isNaN(num)) return;
+    this.app.renderer.background.color = num;
+  }
+
   /** Mark a specific pose binding as actively being edited via canvas
    *  handles. The pivot dot becomes visible and draggable; on the next
    *  tick its position mirrors `<sprite world pos> + <binding.pivot>`.

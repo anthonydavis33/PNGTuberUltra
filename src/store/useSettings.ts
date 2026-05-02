@@ -28,6 +28,21 @@ export type WheelZoomMode = "always" | "ctrl" | "never";
 interface SettingsState {
   wheelZoomMode: WheelZoomMode;
   setWheelZoomMode: (mode: WheelZoomMode) => void;
+  /** When true, all editor chrome (toolbar / panels / status bar)
+   *  is hidden — only the avatar canvas remains, suitable for OBS
+   *  Window Capture. Toggleable via Ctrl+Shift+F or the floating
+   *  exit button in the corner. Persists across launches: if a user
+   *  set up streaming once, they don't want to re-enable every
+   *  session. */
+  streamMode: boolean;
+  setStreamMode: (on: boolean) => void;
+  /** Canvas background color while the app is running. Defaults to
+   *  chroma green (#00ff00) so OBS users can chroma-key the avatar
+   *  out of context. Stored as #RRGGBB hex. Outside of stream mode
+   *  the user mostly doesn't notice this color (the editor chrome
+   *  obscures most of the canvas). */
+  chromaKeyColor: string;
+  setChromaKeyColor: (color: string) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -38,6 +53,10 @@ export const useSettings = create<SettingsState>()(
       // the old plain-wheel zoom can switch to "always" in the UI.
       wheelZoomMode: "ctrl",
       setWheelZoomMode: (mode) => set({ wheelZoomMode: mode }),
+      streamMode: false,
+      setStreamMode: (on) => set({ streamMode: on }),
+      chromaKeyColor: "#00ff00",
+      setChromaKeyColor: (color) => set({ chromaKeyColor: color }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

@@ -36,6 +36,59 @@ body,
   height: 100vh;
 }
 
+/* Stream mode: hide all editor chrome, keep only the canvas. The
+ * canvas takes the full window, and we drop the grid template rows
+ * so it's a single 100vh / 100vw cell. The exit button stays visible
+ * because it sits OUTSIDE the editor sub-panels — it's a child of
+ * .app, not .editor / .panel / etc. */
+.app.stream-mode {
+  grid-template-rows: 1fr;
+}
+
+.app.stream-mode .toolbar,
+.app.stream-mode .panel,
+.app.stream-mode .layers,
+.app.stream-mode .properties,
+.app.stream-mode .status-bar {
+  display: none;
+}
+
+.app.stream-mode .editor {
+  /* When chrome is hidden, the editor's layers + properties columns
+   * also hide. The middle column (PixiCanvas) takes the full width. */
+  grid-template-columns: 1fr;
+}
+
+/* Floating exit button — top-right, low-key. Click target stays
+ * generous (16px icon + label) but the styling is muted enough that
+ * it doesn't draw the streamer's eye away from the avatar. */
+.stream-mode-exit {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  z-index: 1000;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.stream-mode-exit:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.75);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Toolbar ------------------------------------------------------------- */
 .toolbar {
   display: flex;
@@ -1794,6 +1847,51 @@ body,
   font-size: 10px;
   color: var(--text-dim);
   line-height: 1.4;
+}
+
+/* Color row in Settings — chroma key picker + hex display. */
+.settings-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.settings-color-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.settings-color-input {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.settings-color-hex {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.settings-color-hex:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* Settings gear sits after the phase-status text in the toolbar. The
