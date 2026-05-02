@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<!--
+  PNGTuberUltra OBS browser source — phase 9h scaffolding.
+
+  This page is embedded into the Tauri binary via include_str! and
+  served by the Rust-side tiny_http server on a localhost port. OBS
+  Studio's Browser Source loads this URL to display the avatar inside
+  a stream scene.
+
+  Current state: scaffolding only. The page connects to the local
+  server via polling, displays connection status, and exposes the
+  port for diagnostics. The actual avatar render in the browser
+  source is a follow-up phase — needs (a) WebSocket-based bus state
+  sync from the main app to here, (b) a serializable "draw command"
+  protocol so this page can render sprites without re-implementing
+  the full rigging pipeline, and (c) asset serving from the Rust
+  side so this page can load the avatar's PNGs.
+
+  Until the renderer lands, OBS users should use Window Capture +
+  the existing stream mode + chroma key (or the transparent window
+  setting) for live avatars in their stream.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PNGTuberUltra — Stream Source</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent;
+        color: #ddd;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .placeholder {
+        text-align: center;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid rgba(255, 119, 85, 0.4);
+        border-radius: 8px;
+        padding: 24px 32px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .placeholder h1 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #ff7755;
+      }
+      .placeholder code {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+      }
+      .status {
+        margin-top: 14px;
+        font-size: 11px;
+        color: #888;
+      }
+      .status .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: #c24848;
+        vertical-align: middle;
+      }
+      .status .dot.live {
+        background: #4ec24e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="placeholder">
+      <h1>PNGTuberUltra Stream Source</h1>
+      <p>
+        This is the placeholder for the OBS browser source view.<br />
+        Avatar rendering pipeline arrives in a follow-up phase.
+      </p>
+      <p>
+        For now: use OBS Window Capture on the main app +<br />
+        <code>Stream mode</code> (Ctrl+Shift+F) + chroma key
+        / transparent window.
+      </p>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="status-text">Connecting…</span>
+      </div>
+    </div>
+
+    <script>
+      // Heartbeat: poll /heartbeat every 2s. The main app pushes a
+      // timestamp via a Tauri command on every Pixi tick; the server
+      // returns the most recent value so this page can display "live"
+      // when the main app is alive and ticking.
+      const dot = document.getElementById("dot");
+      const text = document.getElementById("status-text");
+      let lastSeen = 0;
+      let lastFetched = 0;
+
+      async function poll() {
+        try {
+          const res = await fetch("/heartbeat", { cache: "no-store" });
+          if (res.ok) {
+            const body = await res.json();
+            lastSeen = body.lastTickMs || 0;
+            lastFetched = Date.now();
+          }
+        } catch (e) {
+          // Server gone — leave UI in disconnected state.
+        }
+      }
+
+      function refresh() {
+        // Live = main app pushed a heartbeat in the last 3s.
+        const fresh = Date.now() - lastFetched < 3000 && lastSeen > 0
+          && Date.now() - lastSeen < 3000;
+        dot.classList.toggle("live", fresh);
+        text.textContent = fresh
+          ? "Connected — main app live"
+          : "Waiting for main app…";
+      }
+
+      setInterval(poll, 1000);
+      setInterval(refresh, 500);
+      poll();
+    </script>
+  </body>
+</html>

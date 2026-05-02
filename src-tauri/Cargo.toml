@@ -34,4 +34,8 @@ serde_json = "1"
 #             frontend and fall back to local listeners.
 #  - Linux:   X11 supported; Wayland is degraded (rdev limitation).
 rdev = "0.5"
+# Tiny HTTP server (no async runtime, no tokio) for the OBS browser
+# source URL. Phase 9h scaffolding: serves stream.html on a fixed
+# port; full avatar rendering pipeline lands in a follow-up phase.
+tiny_http = "0.12"
 

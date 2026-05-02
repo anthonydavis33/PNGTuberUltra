@@ -6,6 +6,7 @@
 // the onSelect / onDrag callbacks.
 
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { PixiApp } from "./pixiApp";
 import { loadFilesAsAssets } from "./assetLoader";
 import { useAvatar } from "../store/useAvatar";
@@ -227,6 +228,20 @@ export function PixiCanvas() {
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  // Push periodic heartbeat to the Rust-side stream server so the OBS
+  // browser source page can show "Connected — main app live." Once
+  // per second is enough for liveness; doing it every Pixi tick would
+  // be 60 invokes/s of overhead for nothing.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      invoke("record_tick_heartbeat").catch(() => {
+        // Server not bound or command unavailable — silent. The
+        // page just stays "Waiting…"
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
   }, []);
 
   // Push active-pose-binding changes (the pivot dot's edit target)

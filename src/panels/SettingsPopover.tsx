@@ -9,7 +9,7 @@
 // it later (theme picker, default mic gain, custom hotkey rebinding) is
 // dropping in another section.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useSettings, type WheelZoomMode } from "../store/useSettings";
 
@@ -210,7 +210,52 @@ function StreamingSection() {
 
       <GlobalKeyboardToggle />
       <GlobalMouseToggle />
+      <BrowserSourceUrlRow />
     </section>
+  );
+}
+
+/** Display + copy-to-clipboard for the OBS browser source URL.
+ *  Phase 9h scaffolding — the URL is live and the heartbeat works,
+ *  but the embedded page is currently a placeholder. The full
+ *  rendering pipeline (live avatar in the browser source) lands in
+ *  a follow-up phase; for now, OBS users should use Window Capture
+ *  on the main app + stream mode + chroma key / transparent. */
+function BrowserSourceUrlRow() {
+  // Hard-coded to match Rust's STREAM_PORT constant. Future: pull
+  // from a Tauri command if we make it configurable.
+  const url = "http://localhost:47882";
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("[browser-source-url] clipboard write failed:", err);
+    }
+  };
+
+  return (
+    <div className="settings-color-row" title="Add as Browser Source in OBS. Currently shows a placeholder; full live avatar rendering is a follow-up phase. Until then, use Window Capture on the main app for the avatar.">
+      <span className="settings-color-label">OBS source</span>
+      <input
+        type="text"
+        className="settings-color-hex"
+        value={url}
+        readOnly
+        onFocus={(e) => e.currentTarget.select()}
+      />
+      <button
+        type="button"
+        className="settings-color-input"
+        style={{ width: "auto", padding: "4px 8px", fontSize: "10px" }}
+        onClick={copy}
+      >
+        {copied ? "Copied!" : "Copy"}
+      </button>
+    </div>
   );
 }
 

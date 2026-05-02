@@ -21,11 +21,13 @@
 //     it; no Tauri-side persistence.
 
 use rdev::{listen, Button, EventType, Key};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
+use tiny_http::{Header, Method, Response, Server};
 
 // Whether global input emission is currently active. Flipped by the
 // JS side's set_global_input_enabled command. The listener thread
@@ -42,6 +44,24 @@ static LISTENER_SPAWNED: AtomicBool = AtomicBool::new(false);
 // quitting. Set from the JS side via set_close_to_tray; read by the
 // window's CloseRequested event handler in the setup callback.
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
+
+// Most recent timestamp (ms since unix epoch) the JS side reported a
+// Pixi tick. Set by the heartbeat command, read by the /heartbeat HTTP
+// endpoint. The OBS browser source page uses this to display
+// "Connected — main app live" vs "Waiting for main app…" based on
+// freshness. AtomicI64 because we need lock-free read across the
+// HTTP server thread.
+static LAST_TICK_MS: AtomicI64 = AtomicI64::new(0);
+
+/// Port the OBS browser source HTTP server binds to. Hard-coded for
+/// 9h scaffolding — making it configurable is a follow-up if users
+/// need it (port conflicts are rare on this range, and OBS just needs
+/// a URL the user can copy).
+const STREAM_PORT: u16 = 47882;
+
+// stream/index.html embedded at compile time. Served by the
+// tiny_http server below.
+const STREAM_HTML: &str = include_str!("../stream/index.html");
 
 #[derive(Clone, serde::Serialize)]
 struct GlobalKeyPayload {
@@ -81,6 +101,89 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn set_close_to_tray(enabled: bool) {
     CLOSE_TO_TRAY.store(enabled, Ordering::SeqCst);
+}
+
+/// Record a Pixi tick heartbeat. The OBS browser source page polls
+/// /heartbeat to detect whether the main app is alive and ticking;
+/// freshness of this timestamp drives the page's "live" / "waiting"
+/// indicator. JS calls this periodically (not every tick — once per
+/// second is enough for liveness).
+#[tauri::command]
+fn record_tick_heartbeat() {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    LAST_TICK_MS.store(now_ms, Ordering::SeqCst);
+}
+
+/// Spawn the OBS browser source HTTP server. Binds 127.0.0.1:STREAM_PORT
+/// and serves three routes:
+///   GET /              → stream.html (embedded)
+///   GET /heartbeat     → JSON { lastTickMs: number } so the page can
+///                        show connection status
+///   anything else      → 404
+///
+/// Server runs in a dedicated thread for the lifetime of the process.
+/// On bind failure (port taken, etc.) we log and continue — the
+/// editor still works without the OBS source. Future iterations:
+/// WebSocket /ws for live state push, /asset/{id} for sprite texture
+/// serving, /model.json for current avatar model.
+fn spawn_stream_server() {
+    thread::spawn(|| {
+        let addr = format!("127.0.0.1:{}", STREAM_PORT);
+        let server = match Server::http(&addr) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "[stream-server] failed to bind {}: {:?}. OBS browser \
+                     source URL will not be available this session.",
+                    addr, e
+                );
+                return;
+            }
+        };
+        eprintln!("[stream-server] listening on http://{}", addr);
+
+        for request in server.incoming_requests() {
+            // Only GET. Anything else gets 405.
+            if !matches!(request.method(), Method::Get) {
+                let _ = request.respond(
+                    Response::from_string("Method not allowed").with_status_code(405),
+                );
+                continue;
+            }
+
+            let url = request.url().to_string();
+            let response = if url == "/" || url == "/index.html" {
+                let html_header = Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"text/html; charset=utf-8"[..],
+                )
+                .expect("static header parse");
+                Response::from_string(STREAM_HTML).with_header(html_header)
+            } else if url == "/heartbeat" {
+                let last = LAST_TICK_MS.load(Ordering::SeqCst);
+                let body = format!("{{\"lastTickMs\":{}}}", last);
+                let json_header = Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"application/json"[..],
+                )
+                .expect("static header parse");
+                let cache_header = Header::from_bytes(
+                    &b"Cache-Control"[..],
+                    &b"no-store"[..],
+                )
+                .expect("static header parse");
+                Response::from_string(body)
+                    .with_header(json_header)
+                    .with_header(cache_header)
+            } else {
+                Response::from_string("Not found").with_status_code(404)
+            };
+            let _ = request.respond(response);
+        }
+    });
 }
 
 /// Toggle global keyboard listening on/off.
@@ -396,7 +499,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             set_global_input_enabled,
-            set_close_to_tray
+            set_close_to_tray,
+            record_tick_heartbeat
         ])
         .setup(|app| {
             // Tray failures shouldn't crash the app — log + continue.
@@ -405,6 +509,10 @@ pub fn run() {
             if let Err(e) = build_tray(app.handle()) {
                 eprintln!("[tray] failed to build: {:?}", e);
             }
+            // Stream server — OBS browser source URL endpoint. Bind
+            // failures are non-fatal (port conflict, sandboxed
+            // environment, etc.); the editor works without it.
+            spawn_stream_server();
             Ok(())
         })
         .on_window_event(|window, event| {
