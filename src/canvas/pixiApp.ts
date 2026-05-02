@@ -12,11 +12,9 @@
 import {
   Application,
   Assets,
-  Circle,
   Container,
   Sprite as PixiSprite,
   Graphics,
-  Rectangle,
   Texture,
   type FederatedPointerEvent,
 } from "pixi.js";
@@ -203,26 +201,20 @@ export class PixiApp {
 
     this.pivotDot = createPivotDot();
     this.pivotDot.visible = false;
+    // Cursor only — the actual click handling is done at stage level
+    // (see onStagePointerDownForOverlay below). Per-handle Pixi
+    // pointerdown listeners proved unreliable in this version of
+    // Pixi 8 (corner handles refused to fire even with explicit
+    // hitArea), so we hit-test manually against the handle positions.
     this.pivotDot.eventMode = "static";
     this.pivotDot.cursor = "grab";
-    // Explicit hitArea — in Pixi 8, alpha-0 "hit-area" fills don't
-    // reliably register as pointer-hit regions for plain Graphics, so
-    // we tell the engine the click box explicitly. 18px-radius
-    // matches the outer ring's visible-bounds with a little slop.
-    this.pivotDot.hitArea = new Circle(0, 0, 18);
-    this.pivotDot.on("pointerdown", this.onPivotPointerDown);
     this.overlays.addChild(this.pivotDot);
 
-    // Free-transform overlay: bounding box outline + 4 corner handles
-    // + 1 rotation handle. All hidden until a pose binding is active
-    // for editing. Per-frame positioning happens in tickBindings. The
-    // transformBox itself is a pure visual outline — explicitly set
-    // eventMode to "none" so its stroked-rect hit region doesn't
-    // shadow the corner handles.
     this.transformBox = createTransformBox();
     this.transformBox.visible = false;
     this.transformBox.eventMode = "none";
     this.overlays.addChild(this.transformBox);
+
     const handleNames: Array<"tl" | "tr" | "bl" | "br"> = [
       "tl",
       "tr",
@@ -230,14 +222,11 @@ export class PixiApp {
       "br",
     ];
     for (const name of handleNames) {
+      void name;
       const h = createCornerHandle();
       h.visible = false;
       h.eventMode = "static";
       h.cursor = "nwse-resize";
-      // 24×24 hit box centered on the handle. Wider than the visible
-      // 10×10 square so users don't have to pixel-aim at editor zoom.
-      h.hitArea = new Rectangle(-12, -12, 24, 24);
-      h.on("pointerdown", this.makeHandleDownHandler(name));
       this.cornerHandles.push(h);
       this.overlays.addChild(h);
     }
@@ -245,8 +234,6 @@ export class PixiApp {
     this.rotateHandle.visible = false;
     this.rotateHandle.eventMode = "static";
     this.rotateHandle.cursor = "grab";
-    this.rotateHandle.hitArea = new Circle(0, 0, 16);
-    this.rotateHandle.on("pointerdown", this.makeHandleDownHandler("rotate"));
     this.overlays.addChild(this.rotateHandle);
 
     this.recenterWorld();
@@ -542,54 +529,100 @@ export class PixiApp {
     }
   }
 
-  private onPivotPointerDown = (e: FederatedPointerEvent): void => {
+  /** Stage-level pointerdown that manually hit-tests against the
+   *  free-transform handles + pivot dot in priority order: rotate >
+   *  corners > pivot. Bypasses Pixi's per-object hit testing because
+   *  it proved unreliable for the small handle Graphics in this
+   *  Pixi 8 version (pivot worked, corners didn't, both used the
+   *  same pattern). Manual hit-testing in overlays-local coords is
+   *  predictable.
+   *
+   *  Returns true if a handle was hit (caller stops propagation so
+   *  the click doesn't fall through to a sprite's drag handler).
+   */
+  private tryStartOverlayDrag(e: FederatedPointerEvent): boolean {
+    if (!this.pivotEditTarget) return false;
+
+    // Convert screen coords to overlays-local (= world) coords.
+    // overlays mirrors world's transform exactly, so this gives the
+    // same coord space as the handles' x/y.
+    const localX = (e.global.x - this.overlays.x) / this.zoom;
+    const localY = (e.global.y - this.overlays.y) / this.zoom;
+
+    // Rotate handle — small target floating above the box. Test first
+    // because it's smaller than the corners and we want it to win
+    // when overlapping (it shouldn't, given its position, but
+    // defense-in-depth).
+    if (this.rotateHandle && this.rotateHandle.visible) {
+      const dx = localX - this.rotateHandle.x;
+      const dy = localY - this.rotateHandle.y;
+      if (Math.hypot(dx, dy) <= 16) {
+        this.startTransformDrag("rotate", e);
+        return true;
+      }
+    }
+
+    // Corner handles — 24×24 hit box centered on each.
+    const handleNames: Array<"tl" | "tr" | "bl" | "br"> = [
+      "tl",
+      "tr",
+      "bl",
+      "br",
+    ];
+    for (let i = 0; i < this.cornerHandles.length; i++) {
+      const h = this.cornerHandles[i];
+      if (!h || !h.visible) continue;
+      const dx = localX - h.x;
+      const dy = localY - h.y;
+      if (Math.abs(dx) <= 12 && Math.abs(dy) <= 12) {
+        this.startTransformDrag(handleNames[i], e);
+        return true;
+      }
+    }
+
+    // Pivot dot — 18-radius hit area.
+    if (this.pivotDot && this.pivotDot.visible) {
+      const dx = localX - this.pivotDot.x;
+      const dy = localY - this.pivotDot.y;
+      if (Math.hypot(dx, dy) <= 18) {
+        this.pivotDragState = {
+          spriteId: this.pivotEditTarget.spriteId,
+          bindingId: this.pivotEditTarget.bindingId,
+          lastX: e.global.x,
+          lastY: e.global.y,
+        };
+        if (this.pivotDot) this.pivotDot.cursor = "grabbing";
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private startTransformDrag(
+    handle: "tl" | "tr" | "bl" | "br" | "rotate",
+    e: FederatedPointerEvent,
+  ): void {
     if (!this.pivotEditTarget) return;
-    e.stopPropagation();
-    this.pivotDragState = {
+    const sprite = this.spriteMap.get(this.pivotEditTarget.spriteId);
+    if (!sprite) return;
+    const centerScreenX = this.world.x + sprite.x * this.zoom;
+    const centerScreenY = this.world.y + sprite.y * this.zoom;
+    const initialAngle = Math.atan2(
+      e.global.y - centerScreenY,
+      e.global.x - centerScreenX,
+    );
+    this.transformDragState = {
       spriteId: this.pivotEditTarget.spriteId,
       bindingId: this.pivotEditTarget.bindingId,
+      handle,
       lastX: e.global.x,
       lastY: e.global.y,
-    };
-    if (this.pivotDot) this.pivotDot.cursor = "grabbing";
-  };
-
-  /** Factory for handle-pointerdown handlers — captures which handle
-   *  was pressed so the same drag-update code can dispatch correctly
-   *  on each move tick. */
-  private makeHandleDownHandler(
-    handle: "tl" | "tr" | "bl" | "br" | "rotate",
-  ): (e: FederatedPointerEvent) => void {
-    return (e: FederatedPointerEvent) => {
-      if (!this.pivotEditTarget) return;
-      e.stopPropagation();
-      const sprite = this.spriteMap.get(this.pivotEditTarget.spriteId);
-      if (!sprite) return;
-      // Sprite center in screen coords for rotation angle math. Use
-      // the world-container transform: world.x/y is canvas center,
-      // sprite.x/y is in world coords scaled by zoom.
-      const centerScreenX = this.world.x + sprite.x * this.zoom;
-      const centerScreenY = this.world.y + sprite.y * this.zoom;
-      const initialAngle = Math.atan2(
-        e.global.y - centerScreenY,
-        e.global.x - centerScreenX,
-      );
-      this.transformDragState = {
-        spriteId: this.pivotEditTarget.spriteId,
-        bindingId: this.pivotEditTarget.bindingId,
-        handle,
-        lastX: e.global.x,
-        lastY: e.global.y,
-        centerScreenX,
-        centerScreenY,
-        lastAngle: initialAngle,
-        // Sprite's natural width / 2 in pixels. After scale =
-        // sprite.width / 2 already; we want PRE-scale. Use texture's
-        // orig.width if available, else fall back to sprite.width
-        // divided by current scale.
-        spriteHalfWidthPx: (sprite.texture.width || sprite.width) / 2,
-        spriteHalfHeightPx: (sprite.texture.height || sprite.height) / 2,
-      };
+      centerScreenX,
+      centerScreenY,
+      lastAngle: initialAngle,
+      spriteHalfWidthPx: (sprite.texture.width || sprite.width) / 2,
+      spriteHalfHeightPx: (sprite.texture.height || sprite.height) / 2,
     };
   }
 
@@ -899,6 +932,24 @@ export class PixiApp {
   private setupStageInteraction(): void {
     this.app.stage.eventMode = "static";
     this.app.stage.hitArea = this.app.screen;
+
+    // Stage-level pointerdown for free-transform handles + pivot dot.
+    // We hit-test manually because Pixi 8's per-object hit-testing
+    // for small Graphics children proved flaky (pivot worked,
+    // corners didn't). CAPTURE phase ensures we see the click
+    // BEFORE sprite-level handlers, so we can stopImmediatePropagation
+    // when a handle is hit and prevent the underlying sprite from
+    // starting a drag (which would otherwise fire on the same click
+    // since handle hit-testing might be missing the click entirely).
+    this.app.stage.addEventListener(
+      "pointerdown",
+      (e: FederatedPointerEvent) => {
+        if (this.tryStartOverlayDrag(e)) {
+          e.stopImmediatePropagation();
+        }
+      },
+      { capture: true },
+    );
 
     // Pixi v8: `pointermove` no longer bubbles past interactive children.
     // `globalpointermove` fires on every move regardless of hit-test.
