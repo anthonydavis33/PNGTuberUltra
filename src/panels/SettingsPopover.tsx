@@ -223,21 +223,24 @@ function GlobalKeyboardToggle() {
   );
 }
 
-/** Privacy section — master kill switch for keyboard + mouse listening.
- *  Mic / webcam have their own toggles in the StatusBar (since they
- *  involve OS-level permissions and explicit start/stop). This is
- *  specifically for the always-on input listeners. */
+/** Privacy + window-behavior section. Privacy: master kill switch for
+ *  keyboard + mouse listening. Mic / webcam have their own toggles in
+ *  the StatusBar (since they involve OS-level permissions and explicit
+ *  start/stop). Window: close-to-tray hijack — useful for streamers
+ *  who keep the rig running while their game is fullscreen. */
 function PrivacySection() {
   const inputPaused = useSettings((s) => s.inputPaused);
   const setInputPaused = useSettings((s) => s.setInputPaused);
+  const closeToTray = useSettings((s) => s.closeToTray);
+  const setCloseToTray = useSettings((s) => s.setCloseToTray);
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">Privacy</div>
+      <div className="settings-section-title">Privacy &amp; window</div>
       <div className="settings-section-desc">
-        Pause keyboard + mouse listening without stopping mic / webcam.
-        Useful while typing passwords or doing private work that you
-        don't want driving the avatar.
+        Pause keyboard + mouse listening, or hide the window to the
+        tray instead of quitting on close. Mic / webcam are managed
+        from the StatusBar gear icons.
       </div>
 
       <label
@@ -256,6 +259,25 @@ function PrivacySection() {
             have their own toggles in the StatusBar). Persists across
             launches — remember to turn it back off when you want the
             rig live again.
+          </div>
+        </div>
+      </label>
+
+      <label
+        className={`settings-radio ${closeToTray ? "active" : ""}`}
+        title="Hide to tray instead of quitting when you close the window. Useful for streamers — closing the editor accidentally won't kill the rig feeding their stream. Bring the window back via the tray's Show window menu item; quit via the tray's Quit menu item or Cmd/Ctrl+Q."
+      >
+        <input
+          type="checkbox"
+          checked={closeToTray}
+          onChange={(e) => setCloseToTray(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">Close to tray</div>
+          <div className="settings-radio-hint">
+            Window's X button hides instead of quitting. Reshow via the
+            tray menu's "Show window." Quit via tray "Quit" or
+            Cmd/Ctrl+Q.
           </div>
         </div>
       </label>

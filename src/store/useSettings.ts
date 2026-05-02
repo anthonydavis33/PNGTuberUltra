@@ -63,6 +63,16 @@ interface SettingsState {
    *  stay window-scoped for privacy. */
   globalKeyboardEnabled: boolean;
   setGlobalKeyboardEnabled: (enabled: boolean) => void;
+  /** When true, clicking the window's close button hides to the
+   *  system tray instead of quitting the app. Bring it back via the
+   *  tray's "Show window" menu item. Useful for streamers who keep
+   *  the rig running with global hooks while their game is fullscreen
+   *  — closing the editor accidentally shouldn't kill the avatar
+   *  feeding their stream. Quitting is still available via the tray
+   *  menu, Cmd/Ctrl+Q, or platform shortcuts. Default off — explicit
+   *  opt-in so people aren't surprised by the hijack. */
+  closeToTray: boolean;
+  setCloseToTray: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -84,6 +94,8 @@ export const useSettings = create<SettingsState>()(
       globalKeyboardEnabled: false,
       setGlobalKeyboardEnabled: (enabled) =>
         set({ globalKeyboardEnabled: enabled }),
+      closeToTray: false,
+      setCloseToTray: (enabled) => set({ closeToTray: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

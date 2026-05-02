@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { LogOut } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { Toolbar } from "./panels/Toolbar";
 import { LayerTree } from "./panels/LayerTree";
 import { Properties } from "./panels/Properties";
@@ -19,6 +20,17 @@ export default function App() {
   const currentFilePath = useAvatar((s) => s.currentFilePath);
   const streamMode = useSettings((s) => s.streamMode);
   const setStreamMode = useSettings((s) => s.setStreamMode);
+  const closeToTray = useSettings((s) => s.closeToTray);
+
+  // Push close-to-tray setting through to Rust whenever it changes.
+  // Rust holds an atomic flag the window's CloseRequested handler
+  // reads — JS is the source of truth, Rust mirrors. invoke is
+  // best-effort: if the command doesn't exist (unlikely) we just log.
+  useEffect(() => {
+    invoke("set_close_to_tray", { enabled: closeToTray }).catch((err) => {
+      console.error("[close-to-tray] sync to Rust failed:", err);
+    });
+  }, [closeToTray]);
 
   // Sync the native window title: "PNGTuberUltra - <name>" where <name> is
   // the avatar's filename (no extension), or "Unnamed" until first save/open.

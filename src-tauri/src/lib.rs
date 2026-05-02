@@ -38,6 +38,11 @@ static GLOBAL_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 // instead.
 static LISTENER_SPAWNED: AtomicBool = AtomicBool::new(false);
 
+// Whether the window's close button should hide-to-tray instead of
+// quitting. Set from the JS side via set_close_to_tray; read by the
+// window's CloseRequested event handler in the setup callback.
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
+
 #[derive(Clone, serde::Serialize)]
 struct GlobalKeyPayload {
     key: String,
@@ -52,6 +57,16 @@ struct GlobalInputErrorPayload {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+/// Toggle close-to-tray behavior for the main window. When enabled,
+/// the window's CloseRequested event hides the window instead of
+/// dropping it; the user can reshow via the tray "Show window" menu
+/// item. JS side calls this whenever the user flips the setting in
+/// the Settings popover.
+#[tauri::command]
+fn set_close_to_tray(enabled: bool) {
+    CLOSE_TO_TRAY.store(enabled, Ordering::SeqCst);
 }
 
 /// Toggle global keyboard listening on/off.
@@ -301,7 +316,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![greet, set_global_input_enabled])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            set_global_input_enabled,
+            set_close_to_tray
+        ])
         .setup(|app| {
             // Tray failures shouldn't crash the app — log + continue.
             // Streamers without a tray-supporting OS still get the
@@ -310,6 +329,18 @@ pub fn run() {
                 eprintln!("[tray] failed to build: {:?}", e);
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Close-to-tray hijack. When the setting is on AND the
+            // user clicks X (or hits Cmd+W on macOS), prevent the
+            // close and hide the window. The tray menu's "Show
+            // window" + "Quit" items remain the path back / out.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if CLOSE_TO_TRAY.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
