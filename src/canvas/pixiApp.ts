@@ -59,6 +59,34 @@ export class PixiApp {
   /** Drag state for the pivot dot — independent from the sprite drag
    *  state since the deltas dispatch to a different store action. */
   private pivotDragState: { spriteId: string; bindingId: string; lastX: number; lastY: number } | null = null;
+  /** Free-transform-box overlay graphics — bounding rect + corner
+   *  handles + rotation handle. Positioned per-frame in tickBindings
+   *  to match the sprite's current rendered transform when a pose
+   *  binding is active for editing. */
+  private transformBox: Graphics | null = null;
+  private cornerHandles: Graphics[] = [];
+  private rotateHandle: Graphics | null = null;
+  /** Drag state for free-transform handles. handle identifies which
+   *  one ("tl"/"tr"/"bl"/"br"/"rotate"); the rest is bookkeeping for
+   *  delta-based pose updates. */
+  private transformDragState: {
+    spriteId: string;
+    bindingId: string;
+    handle: "tl" | "tr" | "bl" | "br" | "rotate";
+    lastX: number;
+    lastY: number;
+    /** Sprite center in screen pixels at drag start — used for the
+     *  rotation handle's angle computation. */
+    centerScreenX: number;
+    centerScreenY: number;
+    /** Last computed angle for rotation drags so we can compute
+     *  per-tick delta even though the cursor wraps around. */
+    lastAngle: number;
+    /** Sprite native size (px) at drag start — divides delta-x/y for
+     *  scale to give a "drag this many sprite-widths to scale by 1". */
+    spriteHalfWidthPx: number;
+    spriteHalfHeightPx: number;
+  } | null = null;
   private readonly spriteMap = new Map<string, PixiSprite>();
   /** Tracks which assetId each Pixi sprite is currently rendering, so we can
    *  detect mid-life asset swaps and re-texture instead of leaking placeholders. */
@@ -177,6 +205,34 @@ export class PixiApp {
     this.pivotDot.cursor = "grab";
     this.pivotDot.on("pointerdown", this.onPivotPointerDown);
     this.overlays.addChild(this.pivotDot);
+
+    // Free-transform overlay: bounding box outline + 4 corner handles
+    // + 1 rotation handle. All hidden until a pose binding is active
+    // for editing. Per-frame positioning happens in tickBindings.
+    this.transformBox = createTransformBox();
+    this.transformBox.visible = false;
+    this.overlays.addChild(this.transformBox);
+    const handleNames: Array<"tl" | "tr" | "bl" | "br"> = [
+      "tl",
+      "tr",
+      "bl",
+      "br",
+    ];
+    for (const name of handleNames) {
+      const h = createCornerHandle();
+      h.visible = false;
+      h.eventMode = "static";
+      h.cursor = "nwse-resize";
+      h.on("pointerdown", this.makeHandleDownHandler(name));
+      this.cornerHandles.push(h);
+      this.overlays.addChild(h);
+    }
+    this.rotateHandle = createRotateHandle();
+    this.rotateHandle.visible = false;
+    this.rotateHandle.eventMode = "static";
+    this.rotateHandle.cursor = "grab";
+    this.rotateHandle.on("pointerdown", this.makeHandleDownHandler("rotate"));
+    this.overlays.addChild(this.rotateHandle);
 
     this.recenterWorld();
 
@@ -483,6 +539,66 @@ export class PixiApp {
     if (this.pivotDot) this.pivotDot.cursor = "grabbing";
   };
 
+  /** Factory for handle-pointerdown handlers — captures which handle
+   *  was pressed so the same drag-update code can dispatch correctly
+   *  on each move tick. */
+  private makeHandleDownHandler(
+    handle: "tl" | "tr" | "bl" | "br" | "rotate",
+  ): (e: FederatedPointerEvent) => void {
+    return (e: FederatedPointerEvent) => {
+      if (!this.pivotEditTarget) return;
+      e.stopPropagation();
+      const sprite = this.spriteMap.get(this.pivotEditTarget.spriteId);
+      if (!sprite) return;
+      // Sprite center in screen coords for rotation angle math. Use
+      // the world-container transform: world.x/y is canvas center,
+      // sprite.x/y is in world coords scaled by zoom.
+      const centerScreenX = this.world.x + sprite.x * this.zoom;
+      const centerScreenY = this.world.y + sprite.y * this.zoom;
+      const initialAngle = Math.atan2(
+        e.global.y - centerScreenY,
+        e.global.x - centerScreenX,
+      );
+      this.transformDragState = {
+        spriteId: this.pivotEditTarget.spriteId,
+        bindingId: this.pivotEditTarget.bindingId,
+        handle,
+        lastX: e.global.x,
+        lastY: e.global.y,
+        centerScreenX,
+        centerScreenY,
+        lastAngle: initialAngle,
+        // Sprite's natural width / 2 in pixels. After scale =
+        // sprite.width / 2 already; we want PRE-scale. Use texture's
+        // orig.width if available, else fall back to sprite.width
+        // divided by current scale.
+        spriteHalfWidthPx: (sprite.texture.width || sprite.width) / 2,
+        spriteHalfHeightPx: (sprite.texture.height || sprite.height) / 2,
+      };
+    };
+  }
+
+  /** Reports incremental free-transform-handle deltas. The React
+   *  layer dispatches these to updateBinding, mutating the pose's
+   *  scale / rotation / translation values. */
+  onTransformHandleDrag?: (
+    spriteId: string,
+    bindingId: string,
+    handle: "tl" | "tr" | "bl" | "br" | "rotate",
+    payload: {
+      /** World-space delta in X (screen pixels divided by zoom). */
+      dx: number;
+      /** World-space delta in Y. */
+      dy: number;
+      /** Cumulative rotation delta in degrees, from drag start. */
+      angleDelta: number;
+      /** Sprite half-width / half-height in native pixels — useful
+       *  for converting drag delta to scale ratio. */
+      halfWidth: number;
+      halfHeight: number;
+    },
+  ) => void;
+
   private setupWheelZoom(): void {
     if (!this.host) return;
     this.wheelHandler = (e: WheelEvent): void => {
@@ -671,17 +787,17 @@ export class PixiApp {
       }
     }
 
-    // Pivot dot — render at <sprite world pos> + <binding.pivot>.
-    // Approximation: doesn't account for the sprite's rotation/scale,
-    // so the dot's screen position is straightforward (drag-right
-    // moves pivot.x, drag-down moves pivot.y) regardless of how the
-    // sprite is currently transformed. That's intuitive even though
-    // it doesn't match where Pixi will actually pivot the rotation
-    // through the sprite's own rotation. Worth it for the UX.
-    if (this.pivotDot && this.pivotEditTarget) {
+    // Free-transform overlay (pivot dot + bounding box + corner /
+    // rotation handles) — rendered when a pose binding is active for
+    // editing. All overlays in `overlays` Container which already
+    // tracks the world's zoom/pan, so positioning in world coords
+    // gives correct screen placement.
+    let overlayVisible = false;
+    if (this.pivotEditTarget) {
       const target = this.pivotEditTarget;
       const ms = sprites.find((s) => s.id === target.spriteId);
       const binding = ms?.bindings.find((b) => b.id === target.bindingId);
+      const pixiSprite = ms ? this.spriteMap.get(ms.id) : undefined;
       const targetTransform =
         ms?.id === selectedId
           ? selectedTransform
@@ -692,21 +808,76 @@ export class PixiApp {
         ms &&
         binding &&
         binding.target === "pose" &&
-        targetTransform
+        targetTransform &&
+        pixiSprite
       ) {
+        overlayVisible = true;
         const pivot = "pivot" in binding ? binding.pivot : undefined;
         const px = pivot?.x ?? 0;
         const py = pivot?.y ?? 0;
-        this.pivotDot.x = targetTransform.x + px;
-        this.pivotDot.y = targetTransform.y + py;
-        this.pivotDot.visible = true;
-      } else {
-        // Target points at something that no longer exists (sprite or
-        // binding deleted while edit mode was on).
-        this.pivotDot.visible = false;
+
+        // Compute bounding box in world coords. Use the texture's
+        // native size scaled by the sprite's CURRENT effective scale
+        // — i.e. what's visible on screen. Anchor offsets shift the
+        // box so the rectangle outlines what the user sees.
+        const halfW =
+          ((pixiSprite.texture.width || pixiSprite.width) *
+            targetTransform.scaleX) /
+          2;
+        const halfH =
+          ((pixiSprite.texture.height || pixiSprite.height) *
+            targetTransform.scaleY) /
+          2;
+        const cx = targetTransform.x;
+        const cy = targetTransform.y;
+
+        if (this.transformBox) {
+          this.transformBox.clear();
+          this.transformBox
+            .rect(cx - halfW, cy - halfH, halfW * 2, halfH * 2)
+            .stroke({ width: 1, color: 0xff7755, alpha: 0.6 });
+          this.transformBox.visible = true;
+        }
+
+        // Corner handles at (cx ± halfW, cy ± halfH).
+        const cornerSpec: Array<[number, number]> = [
+          [-1, -1], // tl
+          [+1, -1], // tr
+          [-1, +1], // bl
+          [+1, +1], // br
+        ];
+        for (let i = 0; i < 4; i++) {
+          const h = this.cornerHandles[i];
+          if (!h) continue;
+          h.x = cx + cornerSpec[i][0] * halfW;
+          h.y = cy + cornerSpec[i][1] * halfH;
+          h.visible = true;
+        }
+
+        // Rotation handle floats above the box (in screen-up
+        // direction, since we're not rotating the box outline with
+        // the sprite for v1 simplicity).
+        if (this.rotateHandle) {
+          this.rotateHandle.x = cx;
+          this.rotateHandle.y = cy - halfH - 24;
+          this.rotateHandle.visible = true;
+        }
+
+        if (this.pivotDot) {
+          this.pivotDot.x = cx + px;
+          this.pivotDot.y = cy + py;
+          this.pivotDot.visible = true;
+        }
       }
-    } else if (this.pivotDot) {
-      this.pivotDot.visible = false;
+    }
+    if (!overlayVisible) {
+      if (this.transformBox) {
+        this.transformBox.clear();
+        this.transformBox.visible = false;
+      }
+      for (const h of this.cornerHandles) h.visible = false;
+      if (this.rotateHandle) this.rotateHandle.visible = false;
+      if (this.pivotDot) this.pivotDot.visible = false;
     }
   };
 
@@ -743,10 +914,41 @@ export class PixiApp {
           dy,
         );
       }
+      if (this.transformDragState) {
+        const s = this.transformDragState;
+        const dx = (e.global.x - s.lastX) / this.zoom;
+        const dy = (e.global.y - s.lastY) / this.zoom;
+        s.lastX = e.global.x;
+        s.lastY = e.global.y;
+        // For rotation: cumulative angle from drag start. For
+        // corners: zero-angle (caller doesn't use it). The angle is
+        // computed in screen space because that's where the cursor
+        // lives; rotation is invariant to zoom anyway.
+        let angleDelta = 0;
+        if (s.handle === "rotate") {
+          const newAngle = Math.atan2(
+            e.global.y - s.centerScreenY,
+            e.global.x - s.centerScreenX,
+          );
+          // Unwrap the angular delta so a drag past ±π doesn't jump.
+          let d = newAngle - s.lastAngle;
+          if (d > Math.PI) d -= 2 * Math.PI;
+          if (d < -Math.PI) d += 2 * Math.PI;
+          s.lastAngle = newAngle;
+          angleDelta = (d * 180) / Math.PI;
+        }
+        this.onTransformHandleDrag?.(s.spriteId, s.bindingId, s.handle, {
+          dx,
+          dy,
+          angleDelta,
+          halfWidth: s.spriteHalfWidthPx,
+          halfHeight: s.spriteHalfHeightPx,
+        });
+      }
     });
 
     // Window-level pointerup so drags terminate even when released outside
-    // the canvas. Same handler clears both kinds of drag state.
+    // the canvas. Same handler clears all drag state kinds.
     this.windowPointerUpHandler = () => {
       if (this.dragState) {
         const sprite = this.spriteMap.get(this.dragState.id);
@@ -757,6 +959,7 @@ export class PixiApp {
         if (this.pivotDot) this.pivotDot.cursor = "grab";
       }
       this.pivotDragState = null;
+      this.transformDragState = null;
     };
     window.addEventListener("pointerup", this.windowPointerUpHandler);
 
@@ -890,6 +1093,40 @@ export class PixiApp {
     sprite.visible = ms.visible;
     sprite.anchor.set(ms.anchor.x, ms.anchor.y);
   }
+}
+
+/** Empty Graphics for the bounding box outline; per-frame redraw in
+ *  tickBindings sets the actual rect coords. */
+function createTransformBox(): Graphics {
+  return new Graphics();
+}
+
+/** Small filled square for free-transform corner handles. */
+function createCornerHandle(): Graphics {
+  const ACCENT = 0xff7755;
+  return new Graphics()
+    // Wide invisible hit area for easier grabbing.
+    .rect(-10, -10, 20, 20)
+    .fill({ color: ACCENT, alpha: 0 })
+    // Visible square: white outline + accent fill.
+    .rect(-5, -5, 10, 10)
+    .fill(0xffffff)
+    .rect(-5, -5, 10, 10)
+    .stroke({ width: 1.5, color: ACCENT });
+}
+
+/** Rotation handle — a small circle distinct from the corner squares
+ *  so users see it as a different gesture. Sits above the bounding
+ *  box, attached by an implicit vertical axis. */
+function createRotateHandle(): Graphics {
+  const ACCENT = 0xff7755;
+  return new Graphics()
+    .circle(0, 0, 14)
+    .fill({ color: ACCENT, alpha: 0 })
+    .circle(0, 0, 7)
+    .fill(0xffffff)
+    .circle(0, 0, 7)
+    .stroke({ width: 1.5, color: ACCENT });
 }
 
 /** Pose-binding pivot dot. Visually distinct from the anchor crosshair

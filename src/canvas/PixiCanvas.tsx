@@ -114,6 +114,49 @@ export function PixiCanvas() {
         });
       };
 
+      // Free-transform handles. Each handle dispatches a different
+      // pose mutation:
+      //   - Corner: drag-direction-aware additive scale + position
+      //     compensation so the OPPOSITE corner stays anchored
+      //     (Photoshop convention). Sign per corner: tl=(-,-),
+      //     tr=(+,-), bl=(-,+), br=(+,+).
+      //   - Rotate: cumulative angle delta in degrees added to
+      //     pose.rotation.
+      pixi.onTransformHandleDrag = (
+        spriteId,
+        bindingId,
+        handle,
+        { dx, dy, angleDelta, halfWidth, halfHeight },
+      ) => {
+        const state = useAvatar.getState();
+        const sprite = state.model.sprites.find((s) => s.id === spriteId);
+        const binding = sprite?.bindings.find((b) => b.id === bindingId);
+        if (!binding || binding.target !== "pose") return;
+
+        const pose = { ...binding.pose };
+
+        if (handle === "rotate") {
+          pose.rotation = (pose.rotation ?? 0) + angleDelta;
+        } else {
+          // Per-corner sign of how drag-x/y maps to scale-x/y change:
+          //   tl: drag-left grows X, drag-up grows Y
+          //   tr: drag-right grows X, drag-up grows Y
+          //   bl: drag-left grows X, drag-down grows Y
+          //   br: drag-right grows X, drag-down grows Y
+          const sx = handle === "tr" || handle === "br" ? 1 : -1;
+          const sy = handle === "bl" || handle === "br" ? 1 : -1;
+          // World-pixel deltas / sprite-half-size ratios = additive
+          // scale change. halfWidth / halfHeight are the sprite's
+          // native half-dimensions in pixels (NOT scaled).
+          const dScaleX = (dx * sx) / halfWidth;
+          const dScaleY = (dy * sy) / halfHeight;
+          pose.scaleX = (pose.scaleX ?? 0) + dScaleX;
+          pose.scaleY = (pose.scaleY ?? 0) + dScaleY;
+        }
+
+        state.updateBinding(spriteId, bindingId, { pose });
+      };
+
       // Initial sync with current store state.
       const state = useAvatar.getState();
       pixi.syncSprites(state.model.sprites, state.assets);
