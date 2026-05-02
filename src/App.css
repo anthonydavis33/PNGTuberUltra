@@ -30,6 +30,16 @@ body,
   overflow: hidden;
 }
 
+/* Transparent-bg cascade — added to <html> + <body> by App.tsx when
+ * stream mode + transparent-window are both active. Lets the OS
+ * desktop show through the Tauri window (which itself must have
+ * `"transparent": true` in tauri.conf.json). */
+html.transparent-bg,
+body.transparent-bg,
+html.transparent-bg #root {
+  background: transparent !important;
+}
+
 .app {
   display: grid;
   grid-template-rows: 36px 1fr auto;
@@ -57,6 +67,18 @@ body,
   /* When chrome is hidden, the editor's layers + properties columns
    * also hide. The middle column (PixiCanvas) takes the full width. */
   grid-template-columns: 1fr;
+}
+
+/* Transparent-window mode: paint nothing in the body / app / pixi
+ * host so the OS sees through to the desktop. The Tauri window
+ * itself is configured transparent at build time
+ * (tauri.conf.json `"transparent": true`); this CSS just stops the
+ * web layer from drawing on top. PixiApp's renderer.background.alpha
+ * is also set to 0 when this mode is active. */
+.app.transparent-bg,
+.app.transparent-bg .editor,
+.app.transparent-bg .pixi-host {
+  background: transparent !important;
 }
 
 /* Floating exit button — top-right, low-key. Click target stays

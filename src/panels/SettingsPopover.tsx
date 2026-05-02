@@ -130,6 +130,8 @@ function StreamingSection() {
   const setStreamMode = useSettings((s) => s.setStreamMode);
   const chromaKeyColor = useSettings((s) => s.chromaKeyColor);
   const setChromaKeyColor = useSettings((s) => s.setChromaKeyColor);
+  const transparentWindow = useSettings((s) => s.transparentWindow);
+  const setTransparentWindow = useSettings((s) => s.setTransparentWindow);
 
   return (
     <section className="settings-section">
@@ -160,8 +162,29 @@ function StreamingSection() {
       </label>
 
       <label
+        className={`settings-radio ${transparentWindow ? "active" : ""}`}
+        title="In stream mode, render the canvas with transparent background instead of the chroma color. OBS Window Capture picks up the avatar with native alpha — no chroma key filter needed. Tauri window is configured transparent at build time. Outside stream mode this is ignored (the editor stays opaque)."
+      >
+        <input
+          type="checkbox"
+          checked={transparentWindow}
+          onChange={(e) => setTransparentWindow(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">Transparent in stream mode</div>
+          <div className="settings-radio-hint">
+            Lets OBS Window Capture pick up native alpha — skip the
+            chroma key filter entirely. macOS / Linux: full
+            transparency support varies by compositor. If your OBS
+            scene shows a black background instead, fall back to the
+            chroma color below.
+          </div>
+        </div>
+      </label>
+
+      <label
         className="settings-color-row"
-        title="Color rendered behind the avatar canvas. Set this to the green / magenta you want OBS Chroma Key to remove. Has no visible effect outside stream mode (editor chrome covers most of the canvas)."
+        title="Color rendered behind the avatar canvas in stream mode (when Transparent is off). Set this to the green / magenta you want OBS Chroma Key to remove. Has no visible effect outside stream mode."
       >
         <span className="settings-color-label">Chroma color</span>
         <input

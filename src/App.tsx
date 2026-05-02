@@ -21,6 +21,7 @@ export default function App() {
   const streamMode = useSettings((s) => s.streamMode);
   const setStreamMode = useSettings((s) => s.setStreamMode);
   const closeToTray = useSettings((s) => s.closeToTray);
+  const transparentWindow = useSettings((s) => s.transparentWindow);
 
   // Push close-to-tray setting through to Rust whenever it changes.
   // Rust holds an atomic flag the window's CloseRequested handler
@@ -31,6 +32,22 @@ export default function App() {
       console.error("[close-to-tray] sync to Rust failed:", err);
     });
   }, [closeToTray]);
+
+  // Propagate transparent-bg state to <html> + <body> so the global
+  // background CSS rule (set in App.css for the root elements)
+  // doesn't fight the per-component transparent class. Toggling on
+  // adds a class that overrides the bg to transparent; toggling off
+  // removes it and the default bg returns. The .app.transparent-bg
+  // rule handles the middle layers.
+  useEffect(() => {
+    const transparent = streamMode && transparentWindow;
+    document.documentElement.classList.toggle("transparent-bg", transparent);
+    document.body.classList.toggle("transparent-bg", transparent);
+    return () => {
+      document.documentElement.classList.remove("transparent-bg");
+      document.body.classList.remove("transparent-bg");
+    };
+  }, [streamMode, transparentWindow]);
 
   // Sync the native window title: "PNGTuberUltra - <name>" where <name> is
   // the avatar's filename (no extension), or "Unnamed" until first save/open.
@@ -91,7 +108,15 @@ export default function App() {
   }, [setStreamMode]);
 
   return (
-    <div className={`app ${streamMode ? "stream-mode" : ""}`}>
+    <div
+      className={[
+        "app",
+        streamMode ? "stream-mode" : "",
+        streamMode && transparentWindow ? "transparent-bg" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <Toolbar />
       <main className="editor">
         <LayerTree />

@@ -440,6 +440,18 @@ export class PixiApp {
     this.app.renderer.background.color = num;
   }
 
+  /** Update the renderer background alpha. 0 = fully transparent
+   *  (canvas content composites over the Tauri window background,
+   *  which is itself transparent when configured at build time so the
+   *  OS desktop shows through), 1 = fully opaque (chroma color shows
+   *  through, current default). Driven by the transparentWindow
+   *  setting in concert with stream mode. */
+  setBackgroundAlpha(alpha: number): void {
+    if (!this.app.renderer) return;
+    const clamped = Math.max(0, Math.min(1, alpha));
+    this.app.renderer.background.alpha = clamped;
+  }
+
   /** Mark a specific pose binding as actively being edited via canvas
    *  handles. The pivot dot becomes visible and draggable; on the next
    *  tick its position mirrors `<sprite world pos> + <binding.pivot>`.

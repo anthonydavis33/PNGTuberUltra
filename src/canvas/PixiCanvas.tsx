@@ -41,6 +41,12 @@ export function PixiCanvas() {
   const addSprite = useAvatar((s) => s.addSprite);
   const wheelZoomMode = useSettings((s) => s.wheelZoomMode);
   const chromaKeyColor = useSettings((s) => s.chromaKeyColor);
+  // Transparency is only effective in stream mode — outside it the
+  // editor stays opaque so users can actually see what they're
+  // editing. We compute the effective alpha here from both flags.
+  const streamMode = useSettings((s) => s.streamMode);
+  const transparentWindow = useSettings((s) => s.transparentWindow);
+  const effectiveAlpha = streamMode && transparentWindow ? 0 : 1;
   const activePoseBinding = useEditor((s) => s.activePoseBinding);
 
   // Init Pixi once on mount; tear down on unmount.
@@ -118,6 +124,10 @@ export function PixiCanvas() {
       // the initial values here.
       pixi.setWheelZoomMode(useSettings.getState().wheelZoomMode);
       pixi.setBackgroundColor(useSettings.getState().chromaKeyColor);
+      const s0 = useSettings.getState();
+      pixi.setBackgroundAlpha(
+        s0.streamMode && s0.transparentWindow ? 0 : 1,
+      );
       pixi.setPivotEditTarget(useEditor.getState().activePoseBinding);
     });
 
@@ -156,6 +166,13 @@ export function PixiCanvas() {
   useEffect(() => {
     appRef.current?.setBackgroundColor(chromaKeyColor);
   }, [chromaKeyColor]);
+
+  // Background alpha tracks the combined streamMode + transparentWindow
+  // state. Only goes 0 (transparent) when both are on, otherwise 1
+  // (opaque, chroma color visible).
+  useEffect(() => {
+    appRef.current?.setBackgroundAlpha(effectiveAlpha);
+  }, [effectiveAlpha]);
 
   // Auto-pause the Pixi ticker when the document is hidden (window
   // minimized, tab in background, system locked, etc.). Inputs may

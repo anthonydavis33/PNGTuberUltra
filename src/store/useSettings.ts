@@ -73,6 +73,18 @@ interface SettingsState {
    *  opt-in so people aren't surprised by the hijack. */
   closeToTray: boolean;
   setCloseToTray: (enabled: boolean) => void;
+  /** When true (and stream mode is also on), the body / canvas
+   *  background renders fully transparent so the OS shows whatever's
+   *  behind the Tauri window. Lets OBS Window Capture pick up the
+   *  avatar with native alpha — no chroma key filter needed.
+   *  Outside stream mode this is ignored (the editor stays opaque so
+   *  you can actually see what you're editing). The Tauri window
+   *  itself must be configured transparent at build time
+   *  (tauri.conf.json `"transparent": true`) for this to take effect;
+   *  on platforms where the window can't be made transparent, the OS
+   *  background shows through (typically black). */
+  transparentWindow: boolean;
+  setTransparentWindow: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -96,6 +108,9 @@ export const useSettings = create<SettingsState>()(
         set({ globalKeyboardEnabled: enabled }),
       closeToTray: false,
       setCloseToTray: (enabled) => set({ closeToTray: enabled }),
+      transparentWindow: false,
+      setTransparentWindow: (enabled) =>
+        set({ transparentWindow: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.
