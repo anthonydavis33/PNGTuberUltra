@@ -12,9 +12,11 @@
 import {
   Application,
   Assets,
+  Circle,
   Container,
   Sprite as PixiSprite,
   Graphics,
+  Rectangle,
   Texture,
   type FederatedPointerEvent,
 } from "pixi.js";
@@ -203,14 +205,23 @@ export class PixiApp {
     this.pivotDot.visible = false;
     this.pivotDot.eventMode = "static";
     this.pivotDot.cursor = "grab";
+    // Explicit hitArea — in Pixi 8, alpha-0 "hit-area" fills don't
+    // reliably register as pointer-hit regions for plain Graphics, so
+    // we tell the engine the click box explicitly. 18px-radius
+    // matches the outer ring's visible-bounds with a little slop.
+    this.pivotDot.hitArea = new Circle(0, 0, 18);
     this.pivotDot.on("pointerdown", this.onPivotPointerDown);
     this.overlays.addChild(this.pivotDot);
 
     // Free-transform overlay: bounding box outline + 4 corner handles
     // + 1 rotation handle. All hidden until a pose binding is active
-    // for editing. Per-frame positioning happens in tickBindings.
+    // for editing. Per-frame positioning happens in tickBindings. The
+    // transformBox itself is a pure visual outline — explicitly set
+    // eventMode to "none" so its stroked-rect hit region doesn't
+    // shadow the corner handles.
     this.transformBox = createTransformBox();
     this.transformBox.visible = false;
+    this.transformBox.eventMode = "none";
     this.overlays.addChild(this.transformBox);
     const handleNames: Array<"tl" | "tr" | "bl" | "br"> = [
       "tl",
@@ -223,6 +234,9 @@ export class PixiApp {
       h.visible = false;
       h.eventMode = "static";
       h.cursor = "nwse-resize";
+      // 24×24 hit box centered on the handle. Wider than the visible
+      // 10×10 square so users don't have to pixel-aim at editor zoom.
+      h.hitArea = new Rectangle(-12, -12, 24, 24);
       h.on("pointerdown", this.makeHandleDownHandler(name));
       this.cornerHandles.push(h);
       this.overlays.addChild(h);
@@ -231,6 +245,7 @@ export class PixiApp {
     this.rotateHandle.visible = false;
     this.rotateHandle.eventMode = "static";
     this.rotateHandle.cursor = "grab";
+    this.rotateHandle.hitArea = new Circle(0, 0, 16);
     this.rotateHandle.on("pointerdown", this.makeHandleDownHandler("rotate"));
     this.overlays.addChild(this.rotateHandle);
 
