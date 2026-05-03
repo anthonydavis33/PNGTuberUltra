@@ -75,6 +75,11 @@ interface AvatarStore {
    *  swallowed — they'd be a no-op at render time anyway and tend to
    *  happen via UI bugs. */
   setSpriteClipBy: (id: SpriteId, clipBy: SpriteId | undefined) => void;
+  /** Toggle / set the sprite's base visibility flag. Bindings still
+   *  AND with this — a sprite hidden via this action is hidden
+   *  regardless of any visibility binding state. UI uses this for
+   *  the per-layer eye toggle. */
+  setSpriteVisible: (id: SpriteId, visible: boolean) => void;
   /** Set or clear per-corner mesh offsets (4-corner deformation). Pass
    *  undefined to disable mesh rendering and fall back to a regular
    *  Sprite. Pass a (possibly partial) corner map to enable / patch
@@ -240,6 +245,16 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
           if (clipBy === id) return s;
           return { ...s, clipBy };
         }),
+      },
+    })),
+
+  setSpriteVisible: (id, visible) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === id ? { ...s, visible } : s,
+        ),
       },
     })),
 

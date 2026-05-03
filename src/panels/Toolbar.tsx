@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   FolderOpen,
-  Plus,
   Redo2,
   Save,
   Settings,
@@ -12,12 +11,15 @@ import {
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { useAvatar } from "../store/useAvatar";
-import { loadFilesAsAssets } from "../canvas/assetLoader";
 import { packAvatar, unpackAvatar } from "../io/pnxr";
 import { SAMPLES, type SampleEntry } from "../io/sampleRig";
 import { SettingsPopover } from "./SettingsPopover";
-import { DEFAULT_ANCHOR, DEFAULT_TRANSFORM } from "../types/avatar";
-import { shortPath } from "../utils/path";
+import { fileNameFromPath, shortPath } from "../utils/path";
+
+/** Displayed in the top-right "version" slot. Bump this in lockstep
+ *  with package.json on releases. The toolbar shows it in plain text;
+ *  no fancy formatting. */
+const APP_VERSION = "v0.9.8";
 
 /** Detect modifier-key for save/open shortcuts. Cmd on Mac, Ctrl elsewhere. */
 const isModifier = (e: KeyboardEvent): boolean => e.ctrlKey || e.metaKey;
@@ -27,16 +29,12 @@ const PNXR_FILTERS = [
 ];
 
 export function Toolbar() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isLoadingAssets, setLoadingAssets] = useState(false);
   const [isFileBusy, setFileBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
   const sampleMenuRef = useRef<HTMLDivElement>(null);
 
-  const registerAsset = useAvatar((s) => s.registerAsset);
-  const addSprite = useAvatar((s) => s.addSprite);
   const isDirty = useAvatar((s) => s.isDirty);
   const currentFilePath = useAvatar((s) => s.currentFilePath);
   const loadAvatar = useAvatar((s) => s.loadAvatar);
@@ -47,37 +45,6 @@ export function Toolbar() {
   // enabled state should change.
   const canUndo = useAvatar((s) => s.history.past.length > 0);
   const canRedo = useAvatar((s) => s.history.future.length > 0);
-
-  // ---- Add Sprite ----------------------------------------------------
-  const onPickFiles = () => fileInputRef.current?.click();
-
-  const onFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    setLoadingAssets(true);
-    try {
-      const loaded = await loadFilesAsAssets(files);
-      for (const asset of loaded) {
-        registerAsset(asset);
-        addSprite({
-          name: asset.name,
-          asset: asset.id,
-          transform: { ...DEFAULT_TRANSFORM },
-          anchor: { ...DEFAULT_ANCHOR },
-          visible: true,
-          bindings: [],
-          modifiers: [],
-        });
-      }
-    } catch (err) {
-      console.error("Failed to load image(s):", err);
-    } finally {
-      setLoadingAssets(false);
-      e.target.value = "";
-      e.target.blur();
-    }
-  };
 
   // ---- Open / Save / Save As ----------------------------------------
   const flashStatus = (msg: string) => {
@@ -304,10 +271,31 @@ export function Toolbar() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Filename label: shows "Untitled" until the user saves to disk, then
+  // the basename (no extension). Color flips between green (clean —
+  // current state matches what's saved) and red (dirty — there are
+  // unsaved edits) so the user has an at-a-glance read on whether
+  // pressing Save would persist anything. The animated dirty dot
+  // remains as a secondary cue for accessibility / muted color
+  // schemes where the green/red distinction is harder to see.
+  const fileLabel = currentFilePath
+    ? fileNameFromPath(currentFilePath)
+    : "Untitled";
+  const fileLabelTitle = currentFilePath
+    ? isDirty
+      ? `${shortPath(currentFilePath)} — unsaved changes (Ctrl+S to save)`
+      : `${shortPath(currentFilePath)} — saved`
+    : isDirty
+      ? "Unsaved changes — Ctrl+S to save"
+      : "No file — Ctrl+S to save for the first time";
+
   return (
     <header className="toolbar">
-      <span className="brand">
-        PNGTuberUltra
+      <span
+        className={`brand ${isDirty ? "dirty" : "clean"}`}
+        title={fileLabelTitle}
+      >
+        {fileLabel}
         {isDirty && (
           <span
             className="dirty-dot"
@@ -316,16 +304,6 @@ export function Toolbar() {
           />
         )}
       </span>
-
-      <button
-        className="tool-btn"
-        onClick={onPickFiles}
-        disabled={isLoadingAssets}
-        title="Add image sprites — click to pick files, or drag PNG / JPG / WebP onto the canvas"
-      >
-        <Plus size={14} />
-        {isLoadingAssets ? "Loading..." : "Add Sprite"}
-      </button>
 
       <span className="toolbar-divider" />
 
@@ -361,6 +339,31 @@ export function Toolbar() {
         Open
       </button>
 
+      <button
+        className="tool-btn"
+        onClick={handleSave}
+        disabled={isFileBusy}
+        title={
+          currentFilePath
+            ? `Save to ${shortPath(currentFilePath)} (Ctrl+S)`
+            : "Save (Ctrl+S — will prompt for location)"
+        }
+      >
+        <Save size={14} />
+        Save
+      </button>
+
+      <button
+        className="tool-btn"
+        onClick={handleSaveAs}
+        disabled={isFileBusy}
+        title="Save to a new location (Ctrl+Shift+S)"
+      >
+        Save As…
+      </button>
+
+      {/* Sample dropdown sits to the right of Save As — tertiary file
+       *  action, distinct from the primary Open / Save / Save As flow. */}
       <div className="sample-menu-wrap" ref={sampleMenuRef}>
         <button
           className="tool-btn"
@@ -391,46 +394,14 @@ export function Toolbar() {
         )}
       </div>
 
-      <button
-        className="tool-btn"
-        onClick={handleSave}
-        disabled={isFileBusy}
-        title={
-          currentFilePath
-            ? `Save to ${shortPath(currentFilePath)} (Ctrl+S)`
-            : "Save (Ctrl+S — will prompt for location)"
-        }
-      >
-        <Save size={14} />
-        Save
-      </button>
-
-      <button
-        className="tool-btn"
-        onClick={handleSaveAs}
-        disabled={isFileBusy}
-        title="Save to a new location (Ctrl+Shift+S)"
-      >
-        Save As…
-      </button>
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        multiple
-        style={{ display: "none" }}
-        onChange={onFiles}
-      />
-
       {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
 
-      <span className="status">Phase 9h — browser source URL</span>
+      <span className="status" title="App version">{APP_VERSION}</span>
 
       <button
         className="tool-btn icon-only toolbar-settings-btn"
         onClick={() => setShowSettings((v) => !v)}
-        title="Settings — wheel zoom, future preferences"
+        title="Settings — wheel zoom, streaming, privacy, global input"
         aria-label="Settings"
       >
         <Settings size={14} />

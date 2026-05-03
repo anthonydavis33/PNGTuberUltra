@@ -9,15 +9,12 @@ import { Properties } from "./panels/Properties";
 import { StatusBar } from "./panels/StatusBar";
 import { PixiCanvas } from "./canvas/PixiCanvas";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import { useAvatar } from "./store/useAvatar";
 import { useSettings } from "./store/useSettings";
-import { fileNameFromPath } from "./utils/path";
 import "./App.css";
 
 export default function App() {
   useKeyboardShortcuts();
 
-  const currentFilePath = useAvatar((s) => s.currentFilePath);
   const streamMode = useSettings((s) => s.streamMode);
   const setStreamMode = useSettings((s) => s.setStreamMode);
   const closeToTray = useSettings((s) => s.closeToTray);
@@ -49,18 +46,16 @@ export default function App() {
     };
   }, [streamMode, transparentWindow]);
 
-  // Sync the native window title: "PNGTuberUltra - <name>" where <name> is
-  // the avatar's filename (no extension), or "Unnamed" until first save/open.
+  // Sync the native window title to a clean "PNGTuberUltra" — the avatar
+  // filename + dirty state lives in the toolbar's brand label instead, so
+  // the OS title bar doesn't double up with what the toolbar already shows.
   useEffect(() => {
-    const name = currentFilePath
-      ? fileNameFromPath(currentFilePath)
-      : "Unnamed";
     getCurrentWindow()
-      .setTitle(`PNGTuberUltra - ${name}`)
+      .setTitle("PNGTuberUltra")
       .catch((err) =>
         console.error("[App] setTitle failed:", err),
       );
-  }, [currentFilePath]);
+  }, []);
 
   // Tray menu's "Toggle pause input" item emits this event from Rust;
   // we toggle the JS-side setting so the tray and the in-app Privacy

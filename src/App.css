@@ -121,15 +121,35 @@ html.transparent-bg #root {
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   user-select: none;
+  /* position: relative is required so the settings popover —
+   * which is `position: absolute` with right/top offsets — anchors
+   * to the toolbar instead of the document body. Without this, the
+   * popover renders far below the viewport and looks like nothing
+   * happened when the gear is clicked. */
+  position: relative;
 }
 
+/* Brand label = current avatar's filename (or "Untitled" before
+ * first save). Color flips with dirty state: green when current
+ * state matches saved file, red when there are unsaved edits.
+ * Combined with the animated dirty-dot, gives the user two
+ * independent at-a-glance cues for save state. */
 .toolbar .brand {
   font-weight: 600;
-  color: var(--accent);
   letter-spacing: 0.02em;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.toolbar .brand.clean {
+  color: #5dd47b;
+}
+
+.toolbar .brand.dirty {
+  color: #ff7755;
 }
 
 .toolbar .status {
@@ -253,7 +273,7 @@ html.transparent-bg #root {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px;
+  padding: 6px 4px 6px 2px;
   border-radius: 4px;
   cursor: grab;
   font-size: 13px;
@@ -275,11 +295,102 @@ html.transparent-bg #root {
   background: var(--selected);
 }
 
+/* Layer tree header: title + Add Sprite button on the right. The
+ * title's default h2 styling (margin-bottom: 12px, etc.) is preserved
+ * via the inner h2; the wrapper just lays them out side-by-side. */
+.layer-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.layer-tree-header h2 {
+  /* Strip the default panel h2 bottom margin — the wrapper handles
+   * spacing. Keep size and weight. */
+  margin: 0;
+}
+
+.layer-tree-add {
+  /* Compact size matches other tool-btn-icon variants in the panels. */
+  font-size: 11px;
+  padding: 3px 8px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Drag-handle indicator on each row. Visible only on hover (or
+ * selected) so non-active rows stay clean. The whole row is still
+ * draggable — this is purely a visual cue. */
+.layer-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+}
+
+.panel li:hover .layer-drag-handle,
+.panel li.selected .layer-drag-handle {
+  opacity: 0.7;
+}
+
 .layer-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Hidden layer: dim the row + name so the user reads "this isn't
+ * rendering" at a glance. The visibility button itself stays at full
+ * opacity so the toggle remains clearly clickable. */
+.panel li.hidden-layer .layer-name {
+  opacity: 0.45;
+  text-decoration: line-through;
+  text-decoration-color: var(--text-dim);
+  text-decoration-thickness: 1px;
+}
+
+/* Per-row visibility toggle (eye icon). Always visible (unlike the
+ * delete icon, which fades in on hover) because a hidden sprite
+ * needs an obvious way to bring it back even when the row isn't
+ * focused. Closed-eye state stays opaque + accent-tinted as the
+ * "I am turned off" cue. */
+.layer-visibility {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 3px;
+  transition:
+    color 0.1s,
+    background 0.1s;
+}
+
+.layer-visibility:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.panel li.hidden-layer .layer-visibility {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.layer-visibility:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .layer-delete {
@@ -1838,12 +1949,42 @@ html.transparent-bg #root {
 
 /* App-settings popover anchors BELOW the toolbar (which sits at the top
  * of the window), unlike the mic / webcam popovers above the status bar
- * which anchor above their gear. Same base styles otherwise. */
+ * which anchor above their gear. Same base styles otherwise.
+ *
+ * Capped at near-viewport-height so the popover scrolls internally
+ * when the section list outgrows the available space (Streaming /
+ * Privacy / Global keyboard / Global mouse / Browser source URL all
+ * stack up — already past one screen at typical resolutions). 24px
+ * = toolbar height + offset + breathing room at the bottom. */
 .settings-popover-app {
   top: calc(100% + 6px);
   right: 8px;
   bottom: auto;
   width: 360px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  /* Slim scrollbar that matches the panel chrome — Firefox uses
+   * scrollbar-width / -color, WebKit uses ::-webkit-scrollbar pseudo
+   * elements (set up below). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.settings-popover-app::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-popover-app::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-popover-app::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.settings-popover-app::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
 }
 
 .settings-section {
