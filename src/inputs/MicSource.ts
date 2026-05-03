@@ -69,6 +69,13 @@ class MicSource {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private rafId: number | null = null;
+  /** RAF loop that keeps the simulated state machine ticking after a
+   *  sim drag releases. Without it, releasing the cursor would
+   *  freeze any in-progress hold timer at its current value, so the
+   *  hold-meter UI would never animate. The loop drives volume=0
+   *  through the same state machine the real mic uses, then stops
+   *  when state naturally falls to null. */
+  private simDecayRafId: number | null = null;
   private config: MicConfig;
 
   // Threshold state machine
@@ -102,6 +109,8 @@ class MicSource {
 
   async start(): Promise<void> {
     if (this.stream) return;
+    // Cancel any running sim-decay loop — real audio is taking over.
+    this.cancelSimDecay();
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     this.audioContext = new AudioContext();
     const source = this.audioContext.createMediaStreamSource(this.stream);
@@ -117,6 +126,7 @@ class MicSource {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this.cancelSimDecay();
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     if (this.audioContext) {
@@ -147,6 +157,110 @@ class MicSource {
       this.currentState = null;
       this.holdEndTime = null;
       this.holdStartTime = null;
+    }
+  }
+
+  /**
+   * Simulate a volume value for testing without an active microphone.
+   * Pass a number in [0, 1] to push that value through the same state-
+   * machine + bus-publishing path the real mic uses, so users can see
+   * thresholds activate, hold timers fire, and bindings respond — all
+   * without speaking. Pass `null` to clear and reset the simulation
+   * state.
+   *
+   * Caller is expected to call this on each frame while simulating
+   * (e.g. on pointermove from a UI affordance), and to call it with
+   * 0 or null on release so hold timers naturally decay the state to
+   * null. Phoneme detection is skipped — there's no audio buffer to
+   * classify formants from.
+   *
+   * No-ops while a real mic is running so a stray UI click can't
+   * stomp on a live mic stream.
+   */
+  publishSimulated(volume: number | null): void {
+    if (this.stream) return;
+    // Any external publish cancels an in-flight decay — the user
+    // either grabbed the bar again (drives a new value) or released
+    // entirely (hard clear, below).
+    this.cancelSimDecay();
+    if (volume === null) {
+      this.currentState = null;
+      this.holdEndTime = null;
+      this.holdStartTime = null;
+      inputBus.publish("MicVolume", null);
+      inputBus.publish("MicState", null);
+      inputBus.publish("MicPhoneme", null);
+      inputBus.publish("MicHoldProgress", null);
+      return;
+    }
+    this.publishSimulatedTick(volume);
+  }
+
+  /** Internal — runs the same publish path publishSimulated does, but
+   *  doesn't cancel the decay loop (so the loop can call this each
+   *  frame). */
+  private publishSimulatedTick(volume: number): void {
+    const v = Math.max(0, Math.min(1, volume));
+    inputBus.publish("MicVolume", v);
+    const newState = this.computeState(v);
+    inputBus.publish("MicState", newState);
+    if (this.holdStartTime !== null && this.holdEndTime !== null) {
+      const total = this.holdEndTime - this.holdStartTime;
+      const elapsed = performance.now() - this.holdStartTime;
+      inputBus.publish("MicHoldProgress", Math.min(1, elapsed / total));
+    } else {
+      inputBus.publish("MicHoldProgress", null);
+    }
+    // Phoneme detection needs the analyser's frequency buffer — skip
+    // entirely in sim mode. Bindings on MicPhoneme just stay at their
+    // last value (or null if none) until the user re-enables the mic.
+  }
+
+  /**
+   * Run the simulated state machine to completion after the user
+   * releases a sim drag. Drives volume=0 through computeState each
+   * frame so the hold timer ticks down visibly in the hold-meter UI;
+   * stops once state naturally falls to null, then publishes null
+   * so bindings disengage cleanly.
+   *
+   * Idempotent — calling while a decay is already running just lets
+   * it continue. Cancel via cancelSimDecay (which publishSimulated
+   * does on any new external publish).
+   */
+  startSimDecay(): void {
+    if (this.stream) return;
+    if (this.simDecayRafId !== null) return;
+    if (this.currentState === null) {
+      // Already inactive — short-circuit to a hard clear.
+      this.publishSimulated(null);
+      return;
+    }
+    const tick = (): void => {
+      // Real mic started? Bail — its tick loop owns the bus now.
+      if (this.stream) {
+        this.simDecayRafId = null;
+        return;
+      }
+      this.publishSimulatedTick(0);
+      if (this.currentState !== null) {
+        this.simDecayRafId = requestAnimationFrame(tick);
+      } else {
+        this.simDecayRafId = null;
+        // Final cleanup — bus channels go null so bindings stop
+        // firing entirely (volume sitting at 0 might still fire
+        // bindings with mappings that include 0).
+        inputBus.publish("MicVolume", null);
+        inputBus.publish("MicState", null);
+        inputBus.publish("MicHoldProgress", null);
+      }
+    };
+    this.simDecayRafId = requestAnimationFrame(tick);
+  }
+
+  private cancelSimDecay(): void {
+    if (this.simDecayRafId !== null) {
+      cancelAnimationFrame(this.simDecayRafId);
+      this.simDecayRafId = null;
     }
   }
 
@@ -343,8 +457,20 @@ class MicSource {
 export { MicSource };
 
 let micSingleton: MicSource | null = null;
-export function getMicSource(initialConfig: MicConfig): MicSource {
-  if (!micSingleton) micSingleton = new MicSource(initialConfig);
+/** Get the singleton MicSource. The first call MUST pass an
+ *  `initialConfig` (used to construct the instance); subsequent
+ *  calls can pass nothing — the singleton ignores the arg once
+ *  it exists. Throws if the first call doesn't pass a config. */
+export function getMicSource(initialConfig?: MicConfig): MicSource {
+  if (!micSingleton) {
+    if (!initialConfig) {
+      throw new Error(
+        "getMicSource: first call must pass an initialConfig — " +
+          "the React layer (StatusBar) is responsible for that.",
+      );
+    }
+    micSingleton = new MicSource(initialConfig);
+  }
   return micSingleton;
 }
 

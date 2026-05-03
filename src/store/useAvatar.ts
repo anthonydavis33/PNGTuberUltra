@@ -4,9 +4,11 @@ import {
   Animation,
   AssetEntry,
   AssetId,
+  AutoBlinkConfig,
   AvatarModel,
   Binding,
   DEFAULT_ANCHOR,
+  DEFAULT_AUTO_BLINK_CONFIG,
   DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
   DEFAULT_TRANSFORM,
@@ -110,6 +112,11 @@ interface AvatarStore {
   // Keyboard config — same pattern.
   getKeyboardConfig: () => KeyboardConfig;
   updateKeyboardConfig: (patch: Partial<KeyboardConfig>) => void;
+
+  // Auto-blink config — fires BlinkState on a semi-random timer for
+  // rigs without webcam tracking.
+  getAutoBlinkConfig: () => AutoBlinkConfig;
+  updateAutoBlinkConfig: (patch: Partial<AutoBlinkConfig>) => void;
 
   // Bindings (per-sprite)
   addBinding: (spriteId: SpriteId, binding: Binding) => void;
@@ -391,6 +398,27 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
           inputs: {
             ...state.model.inputs,
             keyboard: next,
+          },
+        },
+      };
+    }),
+
+  getAutoBlinkConfig: () => {
+    const cfg = get().model.inputs?.autoBlink;
+    return cfg ?? DEFAULT_AUTO_BLINK_CONFIG;
+  },
+
+  updateAutoBlinkConfig: (patch) =>
+    set((state) => {
+      const current =
+        state.model.inputs?.autoBlink ?? DEFAULT_AUTO_BLINK_CONFIG;
+      const next: AutoBlinkConfig = { ...current, ...patch };
+      return {
+        model: {
+          ...state.model,
+          inputs: {
+            ...state.model.inputs,
+            autoBlink: next,
           },
         },
       };

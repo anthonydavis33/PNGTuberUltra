@@ -480,7 +480,71 @@ export interface AvatarModel {
 export interface InputsConfig {
   mic?: MicConfig;
   keyboard?: KeyboardConfig;
+  autoBlink?: AutoBlinkConfig;
 }
+
+/**
+ * Blink driver — owns the `BlinkState` bus channel. When active,
+ * publishes `stateName` while the eyes are "closed" and null while
+ * they're "open"; sprites react via Show On → Blink State. Mirrors
+ * `MicState` in shape so the same rigging idioms apply.
+ *
+ * Two source modes:
+ *
+ * - Auto (default): semi-random timer inside the configured interval
+ *   range fires a blink for `durationMs`, then resets. The natural
+ *   primary mode — most rigs run unattended (no webcam) and want
+ *   continuous blinking out of the box.
+ * - Webcam (`useWebcam: true`): subscribes to the `EyesClosed`
+ *   channel published by WebcamSource and threshold-tests it. The
+ *   user's actual blinks drive the avatar. Falls back to the timer
+ *   when the webcam isn't running (EyesClosed is null), so toggling
+ *   the camera off doesn't suddenly stop blinks mid-stream.
+ *
+ * Per-avatar so different "personalities" (sleepy = slow blinks,
+ * alert = fast blinks) can have their own cadence.
+ */
+export interface AutoBlinkConfig {
+  /** Master on/off. Off = source is idle, BlinkState stays null.
+   *  Defaults to true — blinking is the universal expected baseline,
+   *  not an opt-in feature. */
+  enabled: boolean;
+  /** When true, prefer the webcam's EyesClosed channel as the
+   *  trigger over the timer. Falls back to timer when EyesClosed
+   *  is unavailable (camera off). Default false — most users don't
+   *  run the webcam and want timer-based blinks. */
+  useWebcam: boolean;
+  /** Minimum gap between blinks (ms). Real blink-spacing variance is
+   *  large; treat min and max as the *range* the random delay is
+   *  drawn from each cycle. */
+  intervalMinMs: number;
+  /** Maximum gap between blinks (ms). Common range: 2000–5000ms. */
+  intervalMaxMs: number;
+  /** Duration of each blink (ms) — how long BlinkState holds the
+   *  active value before falling back to null. ~120–180ms feels
+   *  natural for a single blink. */
+  durationMs: number;
+  /** Value published to BlinkState during a blink. Defaults to
+   *  "closed" so `Show On → Blink State → closed` reads naturally,
+   *  but free-text so users can rename if they're co-using the
+   *  channel for other states. */
+  stateName: string;
+  /** 0..1 — probability that a single blink is followed by a second
+   *  one ~150ms later (the "double blink" pattern people sometimes
+   *  do). 0 = never, ~0.15 feels lifelike. Only used by the timer
+   *  path; webcam mode tracks the user's actual blinks. */
+  doubleBlinkProbability?: number;
+}
+
+export const DEFAULT_AUTO_BLINK_CONFIG: AutoBlinkConfig = {
+  enabled: true,
+  useWebcam: false,
+  intervalMinMs: 2000,
+  intervalMaxMs: 5000,
+  durationMs: 150,
+  stateName: "closed",
+  doubleBlinkProbability: 0.15,
+};
 
 export interface MicConfig {
   thresholds: MicThreshold[];
@@ -516,6 +580,36 @@ export interface MicThreshold {
    * Has no effect unless the global MicConfig.phonemesEnabled is also true.
    */
   phonemes?: boolean;
+  /**
+   * Display color for this threshold's band on the volume meter (and the
+   * active fill when this threshold is the current MicState). Hex string
+   * (#RRGGBB). Optional for backward compat — the meter falls back to a
+   * palette color picked by index when undefined.
+   */
+  color?: string;
+}
+
+/** Default palette for newly-created thresholds. The threshold popover
+ *  cycles through these in order so users get distinct colors out of
+ *  the box without having to pick. Visually low → high intensity. */
+export const THRESHOLD_COLOR_PALETTE: readonly string[] = [
+  "#fbbf24", // yellow — talking
+  "#fb923c", // orange — louder
+  "#ef4444", // red — shouting
+  "#a78bfa", // purple — extra slot
+  "#34d399", // green — extra slot
+];
+
+/** Resolve a threshold's display color: explicit `color` if set, otherwise
+ *  fall back to the palette indexed by sort position. */
+export function resolveThresholdColor(
+  t: MicThreshold,
+  sortIndex: number,
+): string {
+  if (t.color) return t.color;
+  return THRESHOLD_COLOR_PALETTE[
+    sortIndex % THRESHOLD_COLOR_PALETTE.length
+  ];
 }
 
 /**
@@ -524,7 +618,13 @@ export interface MicThreshold {
  */
 export const DEFAULT_MIC_CONFIG: MicConfig = {
   thresholds: [
-    { id: "thr-talking", name: "talking", minVolume: 0.05, holdMs: 150 },
+    {
+      id: "thr-talking",
+      name: "talking",
+      minVolume: 0.05,
+      holdMs: 150,
+      color: "#fbbf24",
+    },
   ],
   phonemesEnabled: false,
   gain: 2,

@@ -9,6 +9,8 @@ import {
   DEFAULT_MIC_GAIN,
   MIC_GAIN_MAX,
   MIC_GAIN_MIN,
+  THRESHOLD_COLOR_PALETTE,
+  resolveThresholdColor,
   type MicThreshold,
 } from "../types/avatar";
 
@@ -65,11 +67,18 @@ export function ThresholdPopover({ onClose }: ThresholdPopoverProps) {
       (m, t) => Math.max(m, t.minVolume),
       0,
     );
+    // Pick a default color from the palette by index, so adding a few
+    // thresholds in quick succession yields visually distinct bands.
+    const color =
+      THRESHOLD_COLOR_PALETTE[
+        config.thresholds.length % THRESHOLD_COLOR_PALETTE.length
+      ];
     const newThreshold: MicThreshold = {
       id: `thr-${crypto.randomUUID().slice(0, 8)}`,
       name: "new",
       minVolume: Math.min(0.95, maxVol + 0.2),
       holdMs: 200,
+      color,
     };
     updateMicConfig({ thresholds: [...config.thresholds, newThreshold] });
   };
@@ -125,21 +134,41 @@ export function ThresholdPopover({ onClose }: ThresholdPopoverProps) {
         <span>Enable phoneme detection (A I U E O)</span>
       </label>
 
-      <div className="threshold-list-header">
-        <span>Thresholds</span>
-        <span className="threshold-list-cols">Volume · Hold · Phon</span>
+      {/* Column headers align via the same grid template the threshold
+       *  rows use below — single source of truth for column widths,
+       *  so VOLUME / HOLD / PHON sit directly above their inputs no
+       *  matter what we change later. */}
+      <div className="threshold-list-header threshold-grid">
+        <span className="threshold-list-section-label">Thresholds</span>
+        <span className="threshold-col-label">Volume</span>
+        <span className="threshold-col-label">Hold</span>
+        <span className="threshold-col-label">Phon</span>
+        <span /> {/* delete column */}
       </div>
 
       <ul className="threshold-list">
-        {config.thresholds.map((t) => (
-          <li key={t.id}>
-            <input
-              type="text"
-              className="threshold-name"
-              value={t.name}
-              onChange={(e) => updateThreshold(t.id, { name: e.target.value })}
-              placeholder="name"
-            />
+        {config.thresholds.map((t, i) => (
+          <li key={t.id} className="threshold-grid">
+            <span className="threshold-name-cell">
+              <input
+                type="color"
+                className="threshold-color"
+                value={resolveThresholdColor(t, i)}
+                onChange={(e) =>
+                  updateThreshold(t.id, { color: e.target.value })
+                }
+                title="Band + active-fill color shown on the volume meter"
+              />
+              <input
+                type="text"
+                className="threshold-name"
+                value={t.name}
+                onChange={(e) =>
+                  updateThreshold(t.id, { name: e.target.value })
+                }
+                placeholder="name"
+              />
+            </span>
             <input
               type="number"
               className="threshold-volume"

@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import {
+  DEFAULT_AUTO_BLINK_CONFIG,
   DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
   PHONEMES,
@@ -46,7 +47,26 @@ interface PickerSection {
   values: string[];
   /** Optional helper text shown under the title. */
   hint?: string;
+  /** When true, the section gets an extra "Idle (no state)" checkbox
+   *  at the top whose underlying binding fires when the channel is
+   *  null. Set on channels that meaningfully have an "off" state
+   *  (MicState between thresholds, MicPhoneme during silence, KeyRegion
+   *  when no key held). Hotkey channels are NOT marked nullable —
+   *  their values are explicit and "no value yet" rarely matches the
+   *  rigging mental model. */
+  nullable?: boolean;
 }
+
+/** Internal sentinel used in the picker UI to represent "channel is
+ *  null / empty". Maps to `condition.value: ""` on write — the
+ *  visibility evaluator's `valueAsString(null) === ""` then makes the
+ *  condition match. Choosing a sentinel that's ASCII-clean and
+ *  un-typeable as a real channel value (it has spaces and a unicode
+ *  bracket) so a user-named threshold can never collide. */
+const IDLE_VALUE = "<idle:none>";
+
+/** Friendly label for the idle pseudo-value. */
+const IDLE_LABEL = "Idle (no state)";
 
 /** True iff phoneme detection can ever fire — global flag on AND at least
  *  one threshold has phonemes enabled. */
@@ -71,8 +91,9 @@ function deriveSections(model: AvatarModel): PickerSection[] {
     sections.push({
       channel: "MicState",
       title: "Mic State",
-      values: stateNames,
-      hint: "Volume threshold currently crossed.",
+      values: [IDLE_VALUE, ...stateNames],
+      hint: "Volume threshold currently crossed. 'Idle' fires when no threshold is met — typical for the resting head sprite.",
+      nullable: true,
     });
   }
 
@@ -81,8 +102,25 @@ function deriveSections(model: AvatarModel): PickerSection[] {
     sections.push({
       channel: "MicPhoneme",
       title: "Phoneme",
-      values: [...PHONEMES],
-      hint: "Detected vowel, when phonemes are running.",
+      values: [IDLE_VALUE, ...PHONEMES],
+      hint: "Detected vowel, when phonemes are running. 'Idle' fires when no vowel is detected.",
+      nullable: true,
+    });
+  }
+
+  // Auto-blink — only show when the user has enabled it. The state
+  // name is whatever they configured (defaults to "closed"); both
+  // "Idle" and the active state are exposed so eyes-open and eyes-
+  // closed sprites can each pick their corresponding row.
+  const blink = model.inputs?.autoBlink ?? DEFAULT_AUTO_BLINK_CONFIG;
+  if (blink.enabled && blink.stateName.trim()) {
+    const stateName = blink.stateName.trim();
+    sections.push({
+      channel: "BlinkState",
+      title: "Blink State",
+      values: [IDLE_VALUE, stateName],
+      hint: `Auto-blink driver. Active during a blink (${blink.durationMs}ms), idle the rest of the time.`,
+      nullable: true,
     });
   }
 
@@ -92,8 +130,9 @@ function deriveSections(model: AvatarModel): PickerSection[] {
     sections.push({
       channel: "KeyRegion",
       title: "Key Region",
-      values: regionNames,
-      hint: "Most-recently pressed key's region.",
+      values: [IDLE_VALUE, ...regionNames],
+      hint: "Most-recently pressed key's region. 'Idle' fires when no region key is held (momentary regions only).",
+      nullable: true,
     });
   }
 
@@ -144,14 +183,19 @@ function findManagedBindings(
   );
 }
 
-/** Combine all picker-eligible bindings' values into a single Set. */
+/** Combine all picker-eligible bindings' values into a single Set.
+ *  Empty `equals` value (`""`) maps to the `IDLE_VALUE` sentinel so
+ *  the Idle pseudo-checkbox round-trips correctly. `in` values stay
+ *  as-is — they're never used to encode idle in this picker (idle
+ *  is mutex with real values, so it's always written as a single
+ *  `equals ""` binding). */
 function bindingsToValueSet(bindings: VisibilityBinding[]): Set<string> {
   const out = new Set<string>();
   for (const b of bindings) {
     const cond = b.condition;
     if (cond.op === "equals") {
       const v = cond.value.trim();
-      if (v) out.add(v);
+      out.add(v === "" ? IDLE_VALUE : v);
     } else if (cond.op === "in") {
       for (const v of cond.value
         .split(",")
@@ -241,7 +285,11 @@ export function ShowOnPopover({
   if (!sprite || !position) return null;
 
   /** Apply a new value-set for a channel, consolidating any existing
-   *  matching bindings into one. */
+   *  matching bindings into one. The IDLE_VALUE sentinel translates
+   *  to an empty-string `equals` value on write — the visibility
+   *  evaluator's `valueAsString(null) === ""` then matches when the
+   *  channel is null. Idle is always single-value (mutex enforced
+   *  in toggleOne); an `in` binding never carries the sentinel. */
   const setChannelValues = (channel: string, next: Set<string>): void => {
     const matching = findManagedBindings(sprite, channel);
 
@@ -252,11 +300,12 @@ export function ShowOnPopover({
 
     if (next.size === 1) {
       const [single] = next;
+      const valueToWrite = single === IDLE_VALUE ? "" : single;
       addBinding(sprite.id, {
         id: newBindingId(),
         target: "visible",
         input: channel,
-        condition: { op: "equals", value: single },
+        condition: { op: "equals", value: valueToWrite },
       });
     } else {
       addBinding(sprite.id, {
@@ -278,17 +327,32 @@ export function ShowOnPopover({
     const matching = findManagedBindings(sprite, channel);
     const current = bindingsToValueSet(matching);
     const next = new Set(current);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
+    if (next.has(value)) {
+      next.delete(value);
+    } else {
+      next.add(value);
+      // Idle is mutex with real values — a channel can be either null
+      // OR a state, never both, so combining "Idle" + "talking" would
+      // mean "show when channel is empty AND when channel is talking",
+      // which is contradictory. Auto-clear the other side.
+      if (value === IDLE_VALUE) {
+        next.clear();
+        next.add(IDLE_VALUE);
+      } else if (next.has(IDLE_VALUE)) {
+        next.delete(IDLE_VALUE);
+      }
+    }
 
-    if (matching.length === 1 && next.size > 0) {
-      // Single binding — update in place.
+    // setChannelValues handles the IDLE_VALUE → "" translation when
+    // writing. Falls back to it for any case the in-place update
+    // path below can't handle (multi-binding state, transitioning
+    // to/from idle, etc).
+    if (matching.length === 1 && next.size === 1) {
+      const single = [...next][0];
+      const valueToWrite = single === IDLE_VALUE ? "" : single;
       const b = matching[0];
       updateBinding(sprite.id, b.id, {
-        condition:
-          next.size === 1
-            ? { op: "equals", value: [...next][0] }
-            : { op: "in", value: Array.from(next).join(", ") },
+        condition: { op: "equals", value: valueToWrite },
       });
       return;
     }
@@ -352,16 +416,27 @@ export function ShowOnPopover({
                   )}
                 </header>
                 <div className="show-on-checkboxes">
-                  {section.values.map((value) => (
-                    <label key={value} className="show-on-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={checked.has(value)}
-                        onChange={() => toggleOne(section.channel, value)}
-                      />
-                      <span>{value}</span>
-                    </label>
-                  ))}
+                  {section.values.map((value) => {
+                    const isIdle = value === IDLE_VALUE;
+                    return (
+                      <label
+                        key={value}
+                        className={`show-on-checkbox ${isIdle ? "idle" : ""}`}
+                        title={
+                          isIdle
+                            ? "Sprite shows when this channel has no value — typical for resting / idle sprites that should appear between active states."
+                            : undefined
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked.has(value)}
+                          onChange={() => toggleOne(section.channel, value)}
+                        />
+                        <span>{isIdle ? IDLE_LABEL : value}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </section>
             );

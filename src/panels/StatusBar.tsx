@@ -26,9 +26,12 @@ import { getGlobalMouseSource } from "../inputs/GlobalMouseSource";
 import { getWebcamSource } from "../inputs/WebcamSource";
 import { getLipsyncSource } from "../inputs/LipsyncSource";
 import { getMouseSource } from "../inputs/MouseSource";
+import { getAutoBlinkSource } from "../inputs/AutoBlinkSource";
 import { useAvatar } from "../store/useAvatar";
 import { useSettings } from "../store/useSettings";
 import { useInputValue } from "../hooks/useInputValue";
+import { resolveThresholdColor } from "../types/avatar";
+import { VolumeMeter } from "../components/VolumeMeter";
 import { ThresholdPopover } from "./ThresholdPopover";
 import { KeyboardPopover } from "./KeyboardPopover";
 import { WebcamPopover } from "./WebcamPopover";
@@ -36,8 +39,10 @@ import { WebcamPopover } from "./WebcamPopover";
 export function StatusBar() {
   const micConfig = useAvatar((s) => s.model.inputs?.mic);
   const keyboardConfig = useAvatar((s) => s.model.inputs?.keyboard);
+  const autoBlinkConfig = useAvatar((s) => s.model.inputs?.autoBlink);
   const getMicConfig = useAvatar((s) => s.getMicConfig);
   const getKeyboardConfig = useAvatar((s) => s.getKeyboardConfig);
+  const getAutoBlinkConfig = useAvatar((s) => s.getAutoBlinkConfig);
   const globalKeyboardEnabled = useSettings((s) => s.globalKeyboardEnabled);
   const setGlobalKeyboardEnabled = useSettings(
     (s) => s.setGlobalKeyboardEnabled,
@@ -71,6 +76,13 @@ export function StatusBar() {
     getMouseSource();
     getWebcamSource();
     getLipsyncSource();
+    // Apply current avatar's autoblink config — turns the source on
+    // if the loaded avatar has it enabled, off otherwise. Subsequent
+    // config changes route through the model-subscription effect
+    // below.
+    getAutoBlinkSource().applyConfig(
+      useAvatar.getState().getAutoBlinkConfig(),
+    );
     return null;
   });
 
@@ -171,6 +183,13 @@ export function StatusBar() {
     getKeyboardSource().updateConfig(getKeyboardConfig());
   }, [keyboardConfig, getKeyboardConfig]);
 
+  // Keep auto-blink source config in sync with the avatar. Toggling
+  // enabled in the popover stops/starts the source; tweaking the
+  // interval range applies on the next scheduled blink.
+  useEffect(() => {
+    getAutoBlinkSource().applyConfig(getAutoBlinkConfig());
+  }, [autoBlinkConfig, getAutoBlinkConfig]);
+
   const handleMicToggle = async () => {
     const mic = getMicSource(getMicConfig());
     if (isMicRunning) {
@@ -241,41 +260,71 @@ export function StatusBar() {
           <span>{isMicRunning ? "Live" : "Off"}</span>
         </button>
 
-        <div
-          className="volume-meter"
-          title={`Volume ${volume.toFixed(2)}`}
-          aria-label="Microphone volume meter"
+        <button
+          className="status-gear"
+          onClick={() => {
+            setShowMicPopover((v) => !v);
+            setShowKbPopover(false);
+          }}
+          title="Mic settings — thresholds, hold times, phoneme detection"
+          aria-label="Mic settings"
         >
-          <div
-            className="volume-meter-fill"
-            style={{ width: `${Math.round(volume * 100)}%` }}
-          />
-          {sortedThresholds.map((t) => (
-            <div
-              key={t.id}
-              className="volume-meter-marker"
-              style={{ left: `${Math.round(t.minVolume * 100)}%` }}
-              title={`${t.name}: min ${t.minVolume.toFixed(2)}`}
-            />
-          ))}
-        </div>
+          <Settings size={14} />
+        </button>
 
-        <div
-          className="hold-meter"
-          title={
-            holdProgress != null
-              ? `Hold timer: ${Math.round((1 - holdProgress) * 100)}% remaining`
-              : "Hold timer (idle)"
-          }
-          aria-label="State hold timer"
-        >
-          {holdProgress != null && (
+        {showMicPopover && (
+          <ThresholdPopover onClose={() => setShowMicPopover(false)} />
+        )}
+
+        <VolumeMeter
+          volume={volume}
+          thresholds={sortedThresholds}
+          activeStateName={state ?? null}
+          onUpdateThreshold={(id, patch) => {
+            const updated = mic.thresholds.map((t) =>
+              t.id === id ? { ...t, ...patch } : t,
+            );
+            useAvatar.getState().updateMicConfig({ thresholds: updated });
+          }}
+          isMicRunning={isMicRunning}
+        />
+
+        {(() => {
+          // Hold-meter fill takes the color of whichever threshold is
+          // currently in its hold-decay phase, so the hold timer's
+          // animation visibly belongs to the right band on the
+          // volume meter. activeStateName might be null mid-decay if
+          // we just hit the end of the timer, so fall back to the
+          // last known threshold color.
+          const activeIdx = sortedThresholds.findIndex(
+            (t) => t.name === state,
+          );
+          const activeColor =
+            activeIdx >= 0
+              ? resolveThresholdColor(sortedThresholds[activeIdx], activeIdx)
+              : "var(--accent)";
+          return (
             <div
-              className="hold-meter-fill"
-              style={{ width: `${Math.round((1 - holdProgress) * 100)}%` }}
-            />
-          )}
-        </div>
+              className="hold-meter"
+              title={
+                holdProgress != null
+                  ? `Hold timer: ${Math.round((1 - holdProgress) * 100)}% remaining`
+                  : "Hold timer (idle)"
+              }
+              aria-label="State hold timer"
+            >
+              {holdProgress != null && (
+                <div
+                  className="hold-meter-fill"
+                  style={{
+                    width: `${Math.round((1 - holdProgress) * 100)}%`,
+                    background: activeColor,
+                  }}
+                />
+              )}
+            </div>
+          );
+        })()}
 
         <div className="status-values">
           <span className="status-value">
@@ -295,47 +344,6 @@ export function StatusBar() {
         </div>
 
         {micError && <span className="status-error">{micError}</span>}
-
-        <button
-          className="status-gear"
-          onClick={() => {
-            setShowMicPopover((v) => !v);
-            setShowKbPopover(false);
-          }}
-          title="Mic settings — thresholds, hold times, phoneme detection"
-          aria-label="Mic settings"
-        >
-          <Settings size={14} />
-        </button>
-
-        {showMicPopover && (
-          <ThresholdPopover onClose={() => setShowMicPopover(false)} />
-        )}
-      </section>
-
-      {/* ============================ MOUSE SECTION ============================ */}
-      <section
-        className="status-section status-section-right"
-        title="Live MouseX / MouseY values published to bindings. Range -1..1 over the canvas. Y is up-positive: +1 at top, -1 at bottom. Useful while configuring pose bindings on these channels — the value you see here is exactly what the binding's input mapping reads."
-      >
-        <MousePointer
-          size={14}
-          className={`status-icon ${mouseInside ? "live" : ""}`}
-        />
-        <div className="status-values">
-          <span className="status-value">
-            <span className="status-label">X</span>
-            <span className="status-num">
-              {mouseX != null ? mouseX.toFixed(2) : "—"}
-            </span>
-          </span>
-          <span className="status-value">
-            <span className="status-label">Y</span>
-            <span className="status-num">
-              {mouseY != null ? mouseY.toFixed(2) : "—"}
-            </span>
-          </span>
-        </div>
       </section>
 
       {/* ============================ KEYBOARD SECTION ============================ */}
@@ -388,6 +396,23 @@ export function StatusBar() {
             </span>
           </button>
 
+          <button
+            className="status-gear"
+            onClick={() => {
+              setShowCamPopover((v) => !v);
+              setShowMicPopover(false);
+              setShowKbPopover(false);
+            }}
+            title="Webcam settings — calibration, smoothing"
+            aria-label="Webcam settings"
+          >
+            <Settings size={14} />
+          </button>
+
+          {showCamPopover && (
+            <WebcamPopover onClose={() => setShowCamPopover(false)} />
+          )}
+
           <div className="status-values status-values-webcam">
             <span className="status-value">
               <span className="status-label">Yaw</span>
@@ -432,23 +457,33 @@ export function StatusBar() {
           </div>
 
           {camError && <span className="status-error">{camError}</span>}
+        </section>
 
-          <button
-            className="status-gear"
-            onClick={() => {
-              setShowCamPopover((v) => !v);
-              setShowMicPopover(false);
-              setShowKbPopover(false);
-            }}
-            title="Webcam settings — calibration, smoothing"
-            aria-label="Webcam settings"
-          >
-            <Settings size={14} />
-          </button>
-
-          {showCamPopover && (
-            <WebcamPopover onClose={() => setShowCamPopover(false)} />
-          )}
+        {/* Mouse readout pinned to the bottom-right of the webcam row.
+            Range -1..1 over the canvas; Y is up-positive (+1 top, -1
+            bottom). Useful while tuning pose bindings on Mouse channels. */}
+        <section
+          className="status-section status-section-right"
+          title="Live MouseX / MouseY values published to bindings. Range -1..1 over the canvas. Y is up-positive: +1 at top, -1 at bottom."
+        >
+          <MousePointer
+            size={14}
+            className={`status-icon ${mouseInside ? "live" : ""}`}
+          />
+          <div className="status-values">
+            <span className="status-value">
+              <span className="status-label">X</span>
+              <span className="status-num">
+                {mouseX != null ? mouseX.toFixed(2) : "—"}
+              </span>
+            </span>
+            <span className="status-value">
+              <span className="status-label">Y</span>
+              <span className="status-num">
+                {mouseY != null ? mouseY.toFixed(2) : "—"}
+              </span>
+            </span>
+          </div>
         </section>
       </div>
     </footer>

@@ -14,8 +14,10 @@
 //   - KeyEvent / unknown → null (free text)
 
 import {
+  DEFAULT_AUTO_BLINK_CONFIG,
   DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
+  type AutoBlinkConfig,
   type AvatarModel,
   type BindingKind,
   type KeyboardConfig,
@@ -46,6 +48,15 @@ const effectiveMic = (model: AvatarModel): MicConfig =>
   model.inputs?.mic ?? DEFAULT_MIC_CONFIG;
 const effectiveKeyboard = (model: AvatarModel): KeyboardConfig =>
   model.inputs?.keyboard ?? DEFAULT_KEYBOARD_CONFIG;
+const effectiveAutoBlink = (model: AvatarModel): AutoBlinkConfig =>
+  model.inputs?.autoBlink ?? DEFAULT_AUTO_BLINK_CONFIG;
+
+/** BlinkState only fires when autoBlink is enabled. Hide it from
+ *  binding pickers until the user opts in — otherwise it'd always
+ *  read as null and confuse the rigging UI. */
+function isBlinkChannelReachable(model: AvatarModel): boolean {
+  return effectiveAutoBlink(model).enabled;
+}
 
 /**
  * MicPhoneme is only useful when the global phoneme feature is on AND at
@@ -83,6 +94,7 @@ export function getKnownChannels(
   if (kind === "visibility") {
     builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
+    if (isBlinkChannelReachable(model)) builtins.push("BlinkState");
     builtins.push(
       "Viseme",
       "Lipsync",
@@ -114,6 +126,7 @@ export function getKnownChannels(
     // 0..1 turns a click into a continuous output).
     builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
+    if (isBlinkChannelReachable(model)) builtins.push("BlinkState");
     builtins.push(
       "Viseme",
       "Lipsync",
@@ -154,6 +167,15 @@ export function getValuesForChannel(
     }
     case "MicPhoneme":
       return [...PHONEMES];
+    case "BlinkState": {
+      // Auto-blink emits a single state name (default "closed") while
+      // the eyes are closed, null otherwise. The value list contains
+      // the configured state name so Show On's checkbox + manual
+      // bindings find it without typing.
+      const blink = effectiveAutoBlink(model);
+      const name = blink.stateName.trim();
+      return blink.enabled && name ? [name] : null;
+    }
     case "Viseme":
     case "Lipsync":
       // Lipsync emits values from the viseme vocabulary (phonemes are

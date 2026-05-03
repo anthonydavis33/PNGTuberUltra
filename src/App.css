@@ -1339,6 +1339,19 @@ html.transparent-bg #root {
   cursor: pointer;
 }
 
+/* "Idle (no state)" checkbox — italicized, slightly dim so it reads
+ * as a meta-option (the absence of a state) distinct from the real
+ * state values that follow. Same accent treatment when checked, so
+ * the user gets the same "this is what's selected" cue. */
+.show-on-checkbox.idle {
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.show-on-checkbox.idle:has(input:checked) {
+  font-style: italic;
+}
+
 .show-on-checkbox:has(input:checked) {
   background: rgba(255, 119, 85, 0.18);
   border-color: var(--accent);
@@ -1682,9 +1695,37 @@ html.transparent-bg #root {
   background: rgba(255, 255, 255, 0.02);
 }
 
+/* Webcam-specific values readout: keep all the metric chips on a
+ * single line so the row height stays consistent with the rest of
+ * the status bar. When the window is narrow the right side of the
+ * row clips with a soft fade — signals "there's more here, widen
+ * the window to see it" without adding chrome (badge / scrollbar /
+ * collapse menu). */
 .status-values-webcam {
-  flex-wrap: wrap;
-  gap: 14px 16px;
+  flex-wrap: nowrap;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    black calc(100% - 24px),
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black calc(100% - 24px),
+    transparent
+  );
+}
+
+/* The webcam section in the secondary row needs to grow + shrink so
+ * the values element above has space to clip into. Without grow, the
+ * section is sized to its (large) content and the row stretches to
+ * fit, defeating the single-line clip. */
+.status-bar-row-secondary > .status-section:not(.status-section-right) {
+  flex: 1;
+  min-width: 0;
 }
 
 .mic-toggle {
@@ -1722,36 +1763,124 @@ html.transparent-bg #root {
   background: rgba(231, 70, 70, 0.22);
 }
 
+/* Volume meter — colored bands per threshold + draggable markers +
+ * hold tails. The bar itself extends a touch below its visible
+ * height to accommodate the hold-tail strip beneath. The meter +
+ * tail strip share a single bounding rect so drag math stays in
+ * one coordinate space (cursor X / meter width = volume fraction).
+ *
+ * overflow: visible because the marker handle (top dot) and the
+ * hold-tail handle (small square at the right end of each tail)
+ * both poke outside the bar's nominal height. */
 .volume-meter {
   position: relative;
-  width: 200px;
+  width: 220px;
   height: 12px;
   background: rgba(0, 0, 0, 0.35);
   border-radius: 2px;
-  overflow: hidden;
   flex-shrink: 0;
+  /* overflow: visible so marker handles (above the bar) and hold
+   * tails (below the bar) aren't clipped. The status-bar row is
+   * tall enough to accommodate both protrusions without colliding
+   * with neighbors. */
+  overflow: visible;
 }
 
+/* Sim mode (mic off) — accept pointer input as simulated volume.
+ * Cursor change signals "this is interactive", subtle dashed
+ * outline confirms it isn't actually receiving real audio. */
+.volume-meter.sim-mode {
+  cursor: ew-resize;
+  outline: 1px dashed rgba(255, 255, 255, 0.15);
+  outline-offset: 1px;
+}
+
+.volume-meter.sim-mode:hover {
+  outline-color: rgba(255, 119, 85, 0.5);
+}
+
+/* Background band — one per threshold, spanning from this
+ * threshold's minVolume up to the next one's (or the right edge).
+ * Saturation comes from the inline `background` rgba — the
+ * component picks dull or lit alpha based on whether the current
+ * volume has crossed the band's left edge. */
+.volume-meter-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+/* Volume fill — sits over the bands, semi-transparent, colored by
+ * the active state. Width animates with current MicVolume. */
 .volume-meter-fill {
-  height: 100%;
-  background: linear-gradient(
-    90deg,
-    #4ade80 0%,
-    #84cc16 40%,
-    #fbbf24 70%,
-    #ef4444 95%
-  );
-  transition: width 0.05s linear;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  transition: width 0.05s linear, background 0.15s linear;
+  pointer-events: none;
+  border-radius: 2px 0 0 2px;
 }
 
+/* Threshold marker — vertical line spanning the bar's height. The
+ * small drag handle (round dot) sits on top of it, slightly above
+ * the bar so it's grabbable without overlapping the band beneath. */
 .volume-meter-marker {
   position: absolute;
-  top: -1px;
-  bottom: -1px;
+  top: -2px;
+  bottom: -2px;
   width: 2px;
-  background: rgba(255, 255, 255, 0.7);
   transform: translateX(-50%);
   pointer-events: auto;
+  border-radius: 1px;
+}
+
+.volume-meter-marker-handle {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  border: 2px solid var(--panel-bg);
+  cursor: ew-resize;
+  pointer-events: auto;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.volume-meter-marker-handle:hover {
+  filter: brightness(1.15);
+}
+
+/* Hold tail — thin horizontal strip BELOW the bar, anchored to a
+ * threshold's marker, extending right by holdMs / HOLD_FULL_SCALE_MS
+ * as a fraction of meter width. Right edge has a square drag
+ * handle that retunes holdMs without opening the popover. */
+.volume-meter-hold-tail {
+  position: absolute;
+  top: calc(100% + 2px);
+  height: 4px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.volume-meter-hold-handle {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1.5px solid var(--panel-bg);
+  cursor: ew-resize;
+  pointer-events: auto;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.volume-meter-hold-handle:hover {
+  filter: brightness(1.15);
 }
 
 .hold-meter {
@@ -1823,9 +1952,9 @@ html.transparent-bg #root {
 
 /* Webcam popover --------------------------------------------------- */
 .webcam-popover {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 8px;
+  /* Position handled by the shared .settings-popover rule (bottom-
+   * left of viewport, above the status bar). Keeping just the
+   * width override here. */
   width: 360px;
 }
 
@@ -1901,6 +2030,43 @@ html.transparent-bg #root {
   gap: 12px;
 }
 
+/* Auto-blink section — small label + slider rows + state-name text
+ * input. Reuses .webcam-popover-slider-row + .webcam-smoothing-slider
+ * so all sliders in the popover share visual treatment. */
+.autoblink-field-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  font-weight: 600;
+  width: 48px;
+  flex-shrink: 0;
+}
+
+.autoblink-state-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.autoblink-state-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.autoblink-state-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .webcam-smoothing-slider {
   flex: 1;
   accent-color: var(--accent);
@@ -1929,12 +2095,23 @@ html.transparent-bg #root {
   color: var(--text-dim);
 }
 
-/* Settings popovers (mic + keyboard share base styles) --------------- */
+/* Settings popovers — base styles shared by all status-bar popovers
+ * (mic / keyboard / webcam) and a few special cases that override
+ * positioning (toolbar, show-on).
+ *
+ * Base position pins to the bottom-left of the VIEWPORT, just above
+ * the status bar's primary + secondary rows (32px each + 1px border).
+ * Anchoring to the viewport rather than the gear button means all
+ * three popovers open at the exact same spot regardless of which
+ * gear was clicked — predictable for muscle memory, and the popover
+ * never clips off-screen on a narrow window the way a gear-relative
+ * anchor could. Sits to the LEFT so the user's cursor (likely near
+ * the right side or center of the canvas) doesn't get covered. */
 .settings-popover,
 .threshold-popover {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 8px;
+  position: fixed;
+  bottom: 72px;
+  left: 12px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1947,19 +2124,24 @@ html.transparent-bg #root {
   width: 380px;
 }
 
-/* App-settings popover anchors BELOW the toolbar (which sits at the top
- * of the window), unlike the mic / webcam popovers above the status bar
- * which anchor above their gear. Same base styles otherwise.
+/* App-settings popover anchors BELOW the toolbar (top of viewport),
+ * unlike the status-bar popovers which anchor above the bottom rows.
+ * Same base position: fixed, but flipped to top-right.
+ *
+ * 40px ≈ toolbar height + a few pixels of breathing room. Tracking
+ * a CSS variable would be cleaner if the toolbar ever varied — but
+ * it's intrinsic-height with a fixed 12px y-padding, so 40 is stable
+ * across viewport sizes.
  *
  * Capped at near-viewport-height so the popover scrolls internally
- * when the section list outgrows the available space (Streaming /
- * Privacy / Global keyboard / Global mouse / Browser source URL all
- * stack up — already past one screen at typical resolutions). 24px
- * = toolbar height + offset + breathing room at the bottom. */
+ * when the section list outgrows the available space (streaming /
+ * privacy / global keyboard / global mouse / browser source URL all
+ * stack up). */
 .settings-popover-app {
-  top: calc(100% + 6px);
-  right: 8px;
+  top: 40px;
+  right: 12px;
   bottom: auto;
+  left: auto;
   width: 360px;
   max-height: calc(100vh - 60px);
   overflow-y: auto;
@@ -2265,9 +2447,36 @@ html.transparent-bg #root {
   cursor: pointer;
 }
 
+/* Shared grid template for threshold-list rows + the column-header
+ * row above them. Column widths align across both so the VOLUME /
+ * HOLD / PHON labels sit directly above their inputs. */
+.threshold-grid {
+  display: grid;
+  grid-template-columns: 1fr 60px 60px 28px 26px;
+  gap: 6px;
+  align-items: center;
+}
+
+.threshold-list-section-label {
+  /* "Thresholds" label takes the same first column as the row's
+   * name field — it's a section title, not a column header. */
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.threshold-col-label {
+  /* Per-column header, aligned to the input below. center
+   * because the inputs are short numerics centered visually. */
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  font-size: 9px;
+  padding-left: 2px;
+}
+
 .threshold-list-header {
-  display: flex;
-  justify-content: space-between;
   font-size: 9px;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -2283,9 +2492,9 @@ html.transparent-bg #root {
 }
 
 .threshold-list li {
-  display: grid;
-  grid-template-columns: 1fr 60px 60px 28px 26px;
-  gap: 6px;
+  /* Grid layout comes from the shared `.threshold-grid` class above.
+   * This rule only handles the per-row chrome the header row
+   * doesn't need. */
   margin-bottom: 6px;
   padding: 0;
   background: transparent;
@@ -2294,6 +2503,46 @@ html.transparent-bg #root {
 
 .threshold-list li:hover {
   background: transparent;
+}
+
+/* Name cell = color swatch + text input side-by-side. The swatch is
+ * a native <input type="color"> stripped of its default border so
+ * it reads as a small color chip rather than a button. */
+.threshold-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.threshold-color {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.threshold-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.threshold-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.threshold-color::-moz-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.threshold-name-cell .threshold-name {
+  flex: 1;
+  min-width: 0;
 }
 
 .threshold-list input {
@@ -2347,6 +2596,12 @@ html.transparent-bg #root {
   font-size: 11px;
   font-weight: 700;
   padding: 0;
+  /* Square it explicitly — the grid track is 28px wide and
+   * align-items: center on the row would otherwise let the button
+   * collapse to its content height (~13px) and look like a thin
+   * rectangle. Width 100% fills the track exactly. */
+  width: 100%;
+  height: 28px;
   transition:
     background 0.1s,
     border-color 0.1s,
