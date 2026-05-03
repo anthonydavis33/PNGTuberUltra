@@ -49,6 +49,7 @@ export function PixiCanvas() {
   const transparentWindow = useSettings((s) => s.transparentWindow);
   const effectiveAlpha = streamMode && transparentWindow ? 0 : 1;
   const activePoseBinding = useEditor((s) => s.activePoseBinding);
+  const mutedPoseBindings = useEditor((s) => s.mutedPoseBindings);
 
   // Init Pixi once on mount; tear down on unmount.
   useEffect(() => {
@@ -115,47 +116,48 @@ export function PixiCanvas() {
         });
       };
 
-      // Free-transform handles. Each handle dispatches a different
-      // pose mutation:
-      //   - Corner: drag-direction-aware additive scale + position
-      //     compensation so the OPPOSITE corner stays anchored
-      //     (Photoshop convention). Sign per corner: tl=(-,-),
-      //     tr=(+,-), bl=(-,+), br=(+,+).
-      //   - Rotate: cumulative angle delta in degrees added to
-      //     pose.rotation.
+      // Free-transform handles. The 4 corner squares drive
+      // `poseCornerOffsets` for true non-affine mesh deformation —
+      // affine scale handles are gone (scale alone can't express
+      // perspective skew, which is the main reason to grab a corner).
+      // The rotation handle still drives `pose.rotation`.
       pixi.onTransformHandleDrag = (
         spriteId,
         bindingId,
         handle,
-        { dx, dy, angleDelta, halfWidth, halfHeight },
+        { localDx, localDy, angleDelta },
       ) => {
         const state = useAvatar.getState();
         const sprite = state.model.sprites.find((s) => s.id === spriteId);
         const binding = sprite?.bindings.find((b) => b.id === bindingId);
         if (!binding || binding.target !== "pose") return;
 
-        const pose = { ...binding.pose };
-
         if (handle === "rotate") {
-          pose.rotation = (pose.rotation ?? 0) + angleDelta;
-        } else {
-          // Per-corner sign of how drag-x/y maps to scale-x/y change:
-          //   tl: drag-left grows X, drag-up grows Y
-          //   tr: drag-right grows X, drag-up grows Y
-          //   bl: drag-left grows X, drag-down grows Y
-          //   br: drag-right grows X, drag-down grows Y
-          const sx = handle === "tr" || handle === "br" ? 1 : -1;
-          const sy = handle === "bl" || handle === "br" ? 1 : -1;
-          // World-pixel deltas / sprite-half-size ratios = additive
-          // scale change. halfWidth / halfHeight are the sprite's
-          // native half-dimensions in pixels (NOT scaled).
-          const dScaleX = (dx * sx) / halfWidth;
-          const dScaleY = (dy * sy) / halfHeight;
-          pose.scaleX = (pose.scaleX ?? 0) + dScaleX;
-          pose.scaleY = (pose.scaleY ?? 0) + dScaleY;
+          state.updateBinding(spriteId, bindingId, {
+            pose: {
+              ...binding.pose,
+              rotation: (binding.pose.rotation ?? 0) + angleDelta,
+            },
+          });
+          return;
         }
 
-        state.updateBinding(spriteId, bindingId, { pose });
+        // Corner handle. Drag in sprite-local coords adds to the
+        // matching corner's poseCornerOffsets x/y. Since the runtime
+        // forces the actively-edited binding's progress to 1, drags
+        // produce 1:1 visible feedback.
+        const corner = handle as "tl" | "tr" | "bl" | "br";
+        const cur = binding.poseCornerOffsets ?? {};
+        const curC = cur[corner] ?? {};
+        state.updateBinding(spriteId, bindingId, {
+          poseCornerOffsets: {
+            ...cur,
+            [corner]: {
+              x: (curC.x ?? 0) + localDx,
+              y: (curC.y ?? 0) + localDy,
+            },
+          },
+        });
       };
 
       // Initial sync with current store state.
@@ -173,6 +175,7 @@ export function PixiCanvas() {
         s0.streamMode && s0.transparentWindow ? 0 : 1,
       );
       pixi.setPivotEditTarget(useEditor.getState().activePoseBinding);
+      pixi.setMutedPoseBindings(useEditor.getState().mutedPoseBindings);
     });
 
     return () => {
@@ -251,6 +254,14 @@ export function PixiCanvas() {
   useEffect(() => {
     appRef.current?.setPivotEditTarget(activePoseBinding);
   }, [activePoseBinding]);
+
+  // Push pose-mute set into Pixi. Eye-icon toggle on PoseBindingRow
+  // updates the useEditor store; this effect mirrors that to PixiApp
+  // so the runtime forces those bindings' progress to 0 — they
+  // contribute nothing until the user unmutes.
+  useEffect(() => {
+    appRef.current?.setMutedPoseBindings(mutedPoseBindings);
+  }, [mutedPoseBindings]);
 
   // Mirror PixiApp's zoom into React state via RAF poll.
   //

@@ -18,6 +18,7 @@ import {
   SpriteSheet,
   Transform,
 } from "../types/avatar";
+type CornerOffsets = NonNullable<Sprite["cornerOffsets"]>;
 import { unloadAsset } from "../canvas/assetLoader";
 
 /**
@@ -74,6 +75,21 @@ interface AvatarStore {
    *  swallowed — they'd be a no-op at render time anyway and tend to
    *  happen via UI bugs. */
   setSpriteClipBy: (id: SpriteId, clipBy: SpriteId | undefined) => void;
+  /** Set or clear per-corner mesh offsets (4-corner deformation). Pass
+   *  undefined to disable mesh rendering and fall back to a regular
+   *  Sprite. Pass a (possibly partial) corner map to enable / patch
+   *  individual corners — missing corners default to {x:0, y:0}. */
+  setSpriteCornerOffsets: (
+    id: SpriteId,
+    cornerOffsets:
+      | undefined
+      | {
+          tl?: { x?: number; y?: number };
+          tr?: { x?: number; y?: number };
+          bl?: { x?: number; y?: number };
+          br?: { x?: number; y?: number };
+        },
+  ) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
   removeSprite: (id: SpriteId) => void;
   /** Reorder a sprite within the model array (which is render z-order:
@@ -223,6 +239,39 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
           // render time anyway and is almost always a UI mistake.
           if (clipBy === id) return s;
           return { ...s, clipBy };
+        }),
+      },
+    })),
+
+  setSpriteCornerOffsets: (id, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== id) return s;
+          if (patch === undefined) {
+            // Disable: drop the field entirely so JSON serialization
+            // stays clean and the runtime swaps back to PixiSprite.
+            const next = { ...s };
+            delete next.cornerOffsets;
+            return next;
+          }
+          // Merge patch onto current (or zero defaults). Per-corner
+          // partial patches keep ergonomic NumberField updates: setting
+          // tl.x doesn't clobber tl.y or any other corner.
+          const cur: CornerOffsets = s.cornerOffsets ?? {
+            tl: { x: 0, y: 0 },
+            tr: { x: 0, y: 0 },
+            bl: { x: 0, y: 0 },
+            br: { x: 0, y: 0 },
+          };
+          const merged: CornerOffsets = {
+            tl: { ...cur.tl, ...(patch.tl ?? {}) },
+            tr: { ...cur.tr, ...(patch.tr ?? {}) },
+            bl: { ...cur.bl, ...(patch.bl ?? {}) },
+            br: { ...cur.br, ...(patch.br ?? {}) },
+          };
+          return { ...s, cornerOffsets: merged };
         }),
       },
     })),

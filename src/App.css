@@ -522,6 +522,25 @@ html.transparent-bg #root {
   min-width: 0;
 }
 
+/* Corner-mesh row: per-corner X/Y label + NumberField pair. Used by
+ * PoseBindingRow's CornerOffsetsEditor (the place that actually
+ * drives corner deformation now — pose-driven offsets, not
+ * sprite-base ones). Compact stacked layout because there are
+ * eight number fields per editor. */
+.corner-mesh-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.corner-mesh-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
 .clipping-picker:focus {
   outline: none;
   border-color: var(--accent);
@@ -726,6 +745,16 @@ html.transparent-bg #root {
   background: rgba(255, 119, 85, 0.12);
 }
 
+/* Muted state for the eye-icon mute toggle: dim the button and use
+ * a desaturated tone so the user reads "this binding is silenced"
+ * at a glance. Distinct from .active (which is the accent-orange
+ * "currently editing on canvas" indicator). */
+.pose-binding-canvas-edit.muted {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0.65;
+}
+
 .pose-binding-row select {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -878,6 +907,35 @@ html.transparent-bg #root {
   font-size: 10px;
   color: var(--text-dim);
   line-height: 1.4;
+}
+
+/* Corner-offsets editor inside a pose binding. Same shape as the
+ * sprite-level 4-Corner Mesh editor (corner-mesh-row), but nested
+ * inside the pose row with its own header + clear button. */
+.pose-binding-corners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.pose-binding-corners-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.pose-binding-corners-header > span {
+  flex: 1;
 }
 
 .pose-binding-row .number-field {

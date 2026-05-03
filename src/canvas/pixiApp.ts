@@ -14,15 +14,98 @@ import {
   Assets,
   Container,
   Sprite as PixiSprite,
+  Mesh,
+  MeshGeometry,
   Graphics,
+  Rectangle,
   Texture,
   type FederatedPointerEvent,
 } from "pixi.js";
 import type { AssetEntry, Sprite as ModelSprite } from "../types/avatar";
+
+/** Either a textured PixiSprite (default) or a 4-vertex Mesh used when
+ *  ms.cornerOffsets is set. Both are Containers and share x / y /
+ *  rotation / scale / alpha / visible / texture / tint, so most runtime
+ *  code (tickBindings, applyTransform's body, mask sync) works without
+ *  branching. The two places that DO branch are anchor (PixiSprite has
+ *  it, Mesh bakes anchor into vertex positions) and per-frame mesh
+ *  vertex updates. */
+type Renderable = PixiSprite | Mesh;
+
+interface MeshLayout {
+  /** Sprite-local rect of the visible/displayed region, anchor at origin. */
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  /** UV bounds — sub-rect of the texture that maps onto the quad. */
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+/**
+ * Compute the mesh quad's local-space rect + UV bounds from texture
+ * size, anchor, and (optional) visible bounds.
+ *
+ * When visible bounds are present (asset has a non-fully-transparent
+ * alphaMap), the mesh quad shrinks to the tight art rect and the UVs
+ * map only that region — so corner mesh deformation operates on the
+ * visible art and the editor's free-transform overlay aligns with
+ * what the user sees instead of the texture's transparent borders.
+ *
+ * Anchor stays a fraction of the FULL texture (preserves saved
+ * rigs); the visible-bounds rect is offset accordingly in local
+ * space, so the anchor crosshair lands wherever the user originally
+ * placed it.
+ */
+function computeMeshLayout(
+  texW: number,
+  texH: number,
+  ax: number,
+  ay: number,
+  visibleBounds?: { x: number; y: number; width: number; height: number },
+): MeshLayout {
+  if (
+    visibleBounds &&
+    visibleBounds.width > 0 &&
+    visibleBounds.height > 0 &&
+    texW > 0 &&
+    texH > 0
+  ) {
+    const left = visibleBounds.x - ax * texW;
+    const top = visibleBounds.y - ay * texH;
+    return {
+      left,
+      top,
+      right: left + visibleBounds.width,
+      bottom: top + visibleBounds.height,
+      u0: visibleBounds.x / texW,
+      v0: visibleBounds.y / texH,
+      u1: (visibleBounds.x + visibleBounds.width) / texW,
+      v1: (visibleBounds.y + visibleBounds.height) / texH,
+    };
+  }
+  return {
+    left: -ax * texW,
+    top: -ay * texH,
+    right: (1 - ax) * texW,
+    bottom: (1 - ay) * texH,
+    u0: 0,
+    v0: 0,
+    u1: 1,
+    v1: 1,
+  };
+}
 import {
+  applyPoseCornerOffsets,
   applyTransformBindings,
   computeSpriteVisibility,
   isTransformBinding,
+  spriteNeedsMesh,
+  type PoseEvalOptions,
+  type ResolvedCornerOffsets,
 } from "../bindings/evaluate";
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
 import { AnimationRunner } from "../animations/runner";
@@ -56,6 +139,11 @@ export class PixiApp {
    *  Null = no pivot dot rendered. */
   private pivotEditTarget: { spriteId: string; bindingId: string } | null =
     null;
+  /** Pose-binding IDs the user has explicitly muted via the eye-
+   *  icon toggle. Pose evaluator forces these bindings' progress to
+   *  0 — the binding contributes nothing, so the sprite stays at
+   *  base when all relevant bindings are muted. */
+  private mutedPoseBindings: ReadonlySet<string> = new Set();
   /** Drag state for the pivot dot — independent from the sprite drag
    *  state since the deltas dispatch to a different store action. */
   private pivotDragState: { spriteId: string; bindingId: string; lastX: number; lastY: number } | null = null;
@@ -82,12 +170,17 @@ export class PixiApp {
     /** Last computed angle for rotation drags so we can compute
      *  per-tick delta even though the cursor wraps around. */
     lastAngle: number;
-    /** Sprite native size (px) at drag start — divides delta-x/y for
-     *  scale to give a "drag this many sprite-widths to scale by 1". */
-    spriteHalfWidthPx: number;
-    spriteHalfHeightPx: number;
+    /** Effective scale + rotation captured at drag start. Used by
+     *  corner handles to convert world-pixel screen deltas back to
+     *  sprite-local-space deltas (the corner offsets live in
+     *  unscaled, unrotated local coords). Snapshotted so a binding
+     *  driving the sprite's rotation mid-drag doesn't cause feedback
+     *  loops in the inverse transform. */
+    effScaleX: number;
+    effScaleY: number;
+    effRotRad: number;
   } | null = null;
-  private readonly spriteMap = new Map<string, PixiSprite>();
+  private readonly spriteMap = new Map<string, Renderable>();
   /** Tracks which assetId each Pixi sprite is currently rendering, so we can
    *  detect mid-life asset swaps and re-texture instead of leaking placeholders. */
   private readonly spriteAssetMap = new Map<string, string | undefined>();
@@ -305,8 +398,29 @@ export class PixiApp {
       let sprite = this.spriteMap.get(ms.id);
       const currentAsset = this.spriteAssetMap.get(ms.id);
 
+      // 4-corner mesh deformation toggles the renderable class.
+      // Recreate from scratch when the user adds or removes corner
+      // offsets — the two render paths use different display objects
+      // (PixiSprite vs Mesh) and we can't morph between them.
+      // `spriteNeedsMesh` returns true for sprites with base offsets
+      // OR any pose binding declaring corner targets, so adding a
+      // corner-driving pose to a non-mesh sprite auto-promotes it.
+      const wantsMesh = spriteNeedsMesh(ms);
+      const isMesh = sprite instanceof Mesh;
+      // Asset swap on a Mesh also forces recreate — the new texture
+      // may have different visibleBounds, which means different UVs
+      // and quad size baked into the mesh geometry.
+      const meshAssetSwapped =
+        isMesh && sprite && currentAsset !== ms.asset;
+      if (sprite && (wantsMesh !== isMesh || meshAssetSwapped)) {
+        sprite.destroy();
+        this.spriteMap.delete(ms.id);
+        this.disposeSheet(ms.id);
+        sprite = undefined;
+      }
+
       if (!sprite) {
-        sprite = this.createSprite(ms, assets);
+        sprite = this.createRenderable(ms, assets);
         this.spriteMap.set(ms.id, sprite);
         this.spriteAssetMap.set(ms.id, ms.asset);
         this.world.addChild(sprite);
@@ -317,7 +431,7 @@ export class PixiApp {
         this.disposeSheet(ms.id);
       }
       this.syncSheet(ms, assets);
-      this.applyTransform(sprite, ms);
+      this.applyTransform(sprite, ms, assets);
     }
     for (const [id, sprite] of this.spriteMap) {
       if (!seen.has(id)) {
@@ -510,6 +624,13 @@ export class PixiApp {
     this.app.renderer.background.alpha = clamped;
   }
 
+  /** Update the set of pose binding IDs the user has muted (eye-
+   *  icon toggle). PixiCanvas calls this whenever the useEditor
+   *  store's mutedPoseBindings changes. */
+  setMutedPoseBindings(ids: ReadonlySet<string>): void {
+    this.mutedPoseBindings = ids;
+  }
+
   /** Mark a specific pose binding as actively being edited via canvas
    *  handles. The pivot dot becomes visible and draggable; on the next
    *  tick its position mirrors `<sprite world pos> + <binding.pivot>`.
@@ -612,6 +733,13 @@ export class PixiApp {
       e.global.y - centerScreenY,
       e.global.x - centerScreenX,
     );
+    // Snapshot the renderable's current scale + rotation. We use these
+    // to invert the visual transform when computing local-space drag
+    // deltas, so dragging a corner by N screen pixels moves the
+    // poseCornerOffsets value by the matching amount in sprite-local
+    // coords regardless of sprite scale / rotation.
+    const effScaleX = Math.abs(sprite.scale.x) > 1e-6 ? sprite.scale.x : 1;
+    const effScaleY = Math.abs(sprite.scale.y) > 1e-6 ? sprite.scale.y : 1;
     this.transformDragState = {
       spriteId: this.pivotEditTarget.spriteId,
       bindingId: this.pivotEditTarget.bindingId,
@@ -621,29 +749,32 @@ export class PixiApp {
       centerScreenX,
       centerScreenY,
       lastAngle: initialAngle,
-      spriteHalfWidthPx: (sprite.texture.width || sprite.width) / 2,
-      spriteHalfHeightPx: (sprite.texture.height || sprite.height) / 2,
+      effScaleX,
+      effScaleY,
+      effRotRad: sprite.rotation,
     };
   }
 
   /** Reports incremental free-transform-handle deltas. The React
    *  layer dispatches these to updateBinding, mutating the pose's
-   *  scale / rotation / translation values. */
+   *  rotation (rotate handle) or per-corner mesh offsets (tl/tr/bl/br
+   *  handles). The 4 corner handles drive `poseCornerOffsets`, NOT
+   *  `pose.scaleX/Y` — corner-mesh deformation gives proper non-affine
+   *  perspective skew that scale alone can't produce. */
   onTransformHandleDrag?: (
     spriteId: string,
     bindingId: string,
     handle: "tl" | "tr" | "bl" | "br" | "rotate",
     payload: {
-      /** World-space delta in X (screen pixels divided by zoom). */
-      dx: number;
-      /** World-space delta in Y. */
-      dy: number;
-      /** Cumulative rotation delta in degrees, from drag start. */
+      /** Sprite-local-space delta in X (screen-pixel drag with the
+       *  sprite's effective scale + rotation inverted). For rotate
+       *  handle, ignored. */
+      localDx: number;
+      /** Sprite-local-space delta in Y. */
+      localDy: number;
+      /** Cumulative rotation delta in degrees, from drag start.
+       *  Only meaningful for the rotate handle. */
       angleDelta: number;
-      /** Sprite half-width / half-height in native pixels — useful
-       *  for converting drag delta to scale ratio. */
-      halfWidth: number;
-      halfHeight: number;
     },
   ) => void;
 
@@ -726,11 +857,33 @@ export class PixiApp {
 
     const state = useAvatar.getState();
     const sprites = state.model.sprites;
+    const assets = state.assets;
     const selectedId = state.selectedId;
+    // Build override sets for the pose evaluator:
+    //   - forcePeakBindingIds (progress=1): the currently canvas-
+    //     edited binding, so handles + UI inputs produce immediate
+    //     visual feedback regardless of channel state.
+    //   - forceRestBindingIds (progress=0): any binding the user has
+    //     muted via the eye-icon toggle. Mute beats channel-drive
+    //     so the sprite ignores that binding entirely.
+    let peakSet: Set<string> | null = null;
+    if (this.pivotEditTarget) {
+      peakSet = new Set([this.pivotEditTarget.bindingId]);
+    }
+    const restSet = this.mutedPoseBindings.size > 0
+      ? this.mutedPoseBindings
+      : null;
+    const poseOpts: PoseEvalOptions | undefined =
+      peakSet || restSet
+        ? {
+            forcePeakBindingIds: peakSet ?? undefined,
+            forceRestBindingIds: restSet ?? undefined,
+          }
+        : undefined;
     // Order matters: animations first, so modifierRunner.baseTransform
     // can read tween overlays via the wired animationRunner reference.
     this.animationRunner.beginFrame(sprites, dt, nowMs);
-    this.modifierRunner.beginFrame();
+    this.modifierRunner.beginFrame(poseOpts);
 
     let selectedTransform: EffectiveTransform | null = null;
 
@@ -794,6 +947,16 @@ export class PixiApp {
       pixiSprite.scale.set(t.scaleX, t.scaleY);
       pixiSprite.alpha = t.alpha;
 
+      // Re-stretch the mesh quad to match current texture size + anchor
+      // + effective corner offsets (base + pose-binding contributions).
+      // Doing it every frame is cheap and is what makes pose-driven
+      // corner targets animate as the source channel changes (head-turn
+      // perspective skew tracking HeadYaw, etc.). Editing override
+      // forces the actively-edited binding's progress to 1.
+      if (pixiSprite instanceof Mesh) {
+        this.updateMeshVertices(pixiSprite, ms, assets, poseOpts);
+      }
+
       if (ms.id === selectedId) selectedTransform = t;
     }
 
@@ -814,7 +977,17 @@ export class PixiApp {
       clone.y = source.y;
       clone.rotation = source.rotation;
       clone.scale.copyFrom(source.scale);
-      clone.anchor.copyFrom(source.anchor);
+      // Mesh sources have no `.anchor` — anchor is baked into vertex
+      // positions, so the mask clone (a regular PixiSprite) will mirror
+      // their undeformed bounds via its own anchor read from the model.
+      // Documented limitation: clip shape doesn't track 4-corner mesh
+      // deformation on the source.
+      if (source instanceof PixiSprite) {
+        clone.anchor.copyFrom(source.anchor);
+      } else {
+        const sourceMs = sprites.find((s) => s.id === ms.clipBy);
+        if (sourceMs) clone.anchor.set(sourceMs.anchor.x, sourceMs.anchor.y);
+      }
       // Copy the source's alpha so a translucent mask produces
       // translucent clipping (matches Photoshop's "alpha-as-mask"
       // semantics). If you want hard binary clipping, make the mask
@@ -864,56 +1037,111 @@ export class PixiApp {
         const px = pivot?.x ?? 0;
         const py = pivot?.y ?? 0;
 
-        // Compute bounding box in world coords. Use the texture's
-        // native size scaled by the sprite's CURRENT effective scale
-        // — i.e. what's visible on screen. Anchor offsets shift the
-        // box so the rectangle outlines what the user sees.
-        const halfW =
-          ((pixiSprite.texture.width || pixiSprite.width) *
-            targetTransform.scaleX) /
-          2;
-        const halfH =
-          ((pixiSprite.texture.height || pixiSprite.height) *
-            targetTransform.scaleY) /
-          2;
+        // The texture's native size + anchor + (optional) visible
+        // bounds define the undeformed sprite-local rect. Corner
+        // offsets (base + pose contributions at progress=1, since
+        // we're editing) shift each corner. Aligning the overlay to
+        // visible bounds keeps the box snug against the actual art
+        // — the corner handles sit at the visible corners instead
+        // of inside transparent borders.
+        const w = pixiSprite.texture.width || pixiSprite.width || 0;
+        const h = pixiSprite.texture.height || pixiSprite.height || 0;
+        const ax = ms.anchor.x;
+        const ay = ms.anchor.y;
+        const visibleBounds = this.resolveVisibleBounds(ms, assets);
+        const layout = computeMeshLayout(w, h, ax, ay, visibleBounds);
+        const effectiveOffsets: ResolvedCornerOffsets =
+          applyPoseCornerOffsets(ms, poseOpts) ?? {
+            tl: { x: 0, y: 0 },
+            tr: { x: 0, y: 0 },
+            bl: { x: 0, y: 0 },
+            br: { x: 0, y: 0 },
+          };
+        const left = layout.left;
+        const right = layout.right;
+        const top = layout.top;
+        const bottom = layout.bottom;
+        // Sprite-local positions of each deformed corner.
+        const cornersLocal = {
+          tl: { x: left + effectiveOffsets.tl.x, y: top + effectiveOffsets.tl.y },
+          tr: { x: right + effectiveOffsets.tr.x, y: top + effectiveOffsets.tr.y },
+          bl: { x: left + effectiveOffsets.bl.x, y: bottom + effectiveOffsets.bl.y },
+          br: { x: right + effectiveOffsets.br.x, y: bottom + effectiveOffsets.br.y },
+        };
+        // Apply sprite's effective rotation + scale, then world-translate.
+        const rotRad = (targetTransform.rotation * Math.PI) / 180;
+        const cos = Math.cos(rotRad);
+        const sin = Math.sin(rotRad);
         const cx = targetTransform.x;
         const cy = targetTransform.y;
+        const toWorld = (lx: number, ly: number): { x: number; y: number } => {
+          const sx = lx * targetTransform.scaleX;
+          const sy = ly * targetTransform.scaleY;
+          return {
+            x: cx + sx * cos - sy * sin,
+            y: cy + sx * sin + sy * cos,
+          };
+        };
+        const wTL = toWorld(cornersLocal.tl.x, cornersLocal.tl.y);
+        const wTR = toWorld(cornersLocal.tr.x, cornersLocal.tr.y);
+        const wBL = toWorld(cornersLocal.bl.x, cornersLocal.bl.y);
+        const wBR = toWorld(cornersLocal.br.x, cornersLocal.br.y);
 
+        // Outline traces the deformed quad — gives the user a clear
+        // sense of "the mesh is currently shaped like this."
         if (this.transformBox) {
           this.transformBox.clear();
           this.transformBox
-            .rect(cx - halfW, cy - halfH, halfW * 2, halfH * 2)
+            .moveTo(wTL.x, wTL.y)
+            .lineTo(wTR.x, wTR.y)
+            .lineTo(wBR.x, wBR.y)
+            .lineTo(wBL.x, wBL.y)
+            .lineTo(wTL.x, wTL.y)
             .stroke({ width: 1, color: 0xff7755, alpha: 0.6 });
           this.transformBox.visible = true;
         }
 
-        // Corner handles at (cx ± halfW, cy ± halfH).
-        const cornerSpec: Array<[number, number]> = [
-          [-1, -1], // tl
-          [+1, -1], // tr
-          [-1, +1], // bl
-          [+1, +1], // br
+        // Corner handles sit at each deformed corner. Dragging them
+        // updates poseCornerOffsets[corner] for true non-affine mesh
+        // deformation — affine scale corners are gone.
+        const cornerWorld: Record<"tl" | "tr" | "bl" | "br", { x: number; y: number }> = {
+          tl: wTL,
+          tr: wTR,
+          bl: wBL,
+          br: wBR,
+        };
+        const handleNames: Array<"tl" | "tr" | "bl" | "br"> = [
+          "tl",
+          "tr",
+          "bl",
+          "br",
         ];
         for (let i = 0; i < 4; i++) {
-          const h = this.cornerHandles[i];
-          if (!h) continue;
-          h.x = cx + cornerSpec[i][0] * halfW;
-          h.y = cy + cornerSpec[i][1] * halfH;
-          h.visible = true;
+          const handle = this.cornerHandles[i];
+          if (!handle) continue;
+          const wp = cornerWorld[handleNames[i]];
+          handle.x = wp.x;
+          handle.y = wp.y;
+          handle.visible = true;
         }
 
-        // Rotation handle floats above the box (in screen-up
-        // direction, since we're not rotating the box outline with
-        // the sprite for v1 simplicity).
+        // Rotation handle floats above the centered box (top-mid of
+        // undeformed bounds, transformed). Stays as a rotation
+        // affordance — drives pose.rotation as before.
         if (this.rotateHandle) {
-          this.rotateHandle.x = cx;
-          this.rotateHandle.y = cy - halfH - 24;
+          const topMid = toWorld((left + right) / 2, top - 24);
+          this.rotateHandle.x = topMid.x;
+          this.rotateHandle.y = topMid.y;
           this.rotateHandle.visible = true;
         }
 
         if (this.pivotDot) {
-          this.pivotDot.x = cx + px;
-          this.pivotDot.y = cy + py;
+          // Pivot is in undeformed sprite-local coords, transformed
+          // through the sprite's effective scale + rotation so it
+          // tracks visually with the mesh.
+          const pivotWorld = toWorld(px, py);
+          this.pivotDot.x = pivotWorld.x;
+          this.pivotDot.y = pivotWorld.y;
           this.pivotDot.visible = true;
         }
       }
@@ -982,10 +1210,25 @@ export class PixiApp {
       }
       if (this.transformDragState) {
         const s = this.transformDragState;
-        const dx = (e.global.x - s.lastX) / this.zoom;
-        const dy = (e.global.y - s.lastY) / this.zoom;
+        // World-space delta (screen pixels divided by zoom — same units
+        // as model x/y). We convert to sprite-local space below for
+        // corner-mesh editing so the drag travels with the visible
+        // corner regardless of sprite scale + rotation.
+        const worldDx = (e.global.x - s.lastX) / this.zoom;
+        const worldDy = (e.global.y - s.lastY) / this.zoom;
         s.lastX = e.global.x;
         s.lastY = e.global.y;
+
+        // Inverse rotation, then divide by scale to undo the visual
+        // transform. The local-space delta is what poseCornerOffsets
+        // values actually live in.
+        const cos = Math.cos(s.effRotRad);
+        const sin = Math.sin(s.effRotRad);
+        const unrotX = worldDx * cos + worldDy * sin;
+        const unrotY = -worldDx * sin + worldDy * cos;
+        const localDx = unrotX / s.effScaleX;
+        const localDy = unrotY / s.effScaleY;
+
         // For rotation: cumulative angle from drag start. For
         // corners: zero-angle (caller doesn't use it). The angle is
         // computed in screen space because that's where the cursor
@@ -1004,11 +1247,9 @@ export class PixiApp {
           angleDelta = (d * 180) / Math.PI;
         }
         this.onTransformHandleDrag?.(s.spriteId, s.bindingId, s.handle, {
-          dx,
-          dy,
+          localDx,
+          localDy,
           angleDelta,
-          halfWidth: s.spriteHalfWidthPx,
-          halfHeight: s.spriteHalfHeightPx,
         });
       }
     });
@@ -1098,6 +1339,22 @@ export class PixiApp {
     return this.placeholderTexture;
   }
 
+  private createRenderable(
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): Renderable {
+    // Use the same promotion test syncSprites uses — base
+    // cornerOffsets OR any pose binding declaring corner targets.
+    // Using ms.cornerOffsets directly here (the previous version)
+    // missed pose-driven promotion: syncSprites would destroy the
+    // existing PixiSprite expecting a Mesh, createRenderable would
+    // hand back another PixiSprite, and the mismatch repeated every
+    // sync — sprite never deformed because it was never a Mesh.
+    return spriteNeedsMesh(ms)
+      ? this.createMesh(ms, assets)
+      : this.createSprite(ms, assets);
+  }
+
   private createSprite(
     ms: ModelSprite,
     assets: Record<string, AssetEntry>,
@@ -1145,19 +1402,176 @@ export class PixiApp {
     return sprite;
   }
 
-  private applyTransform(sprite: PixiSprite, ms: ModelSprite): void {
+  /** Build a 4-vertex Mesh that renders the asset's texture with
+   *  per-corner pixel offsets. The geometry's positions are recomputed
+   *  from `ms.anchor` + texture size + visible bounds + corner offsets
+   *  each frame in `tickBindings` (cheap — 8 floats + 1 buffer
+   *  reassign), so this initializer is only correct for the first
+   *  paint before the ticker runs.
+   *
+   *  When the asset has visible bounds (most non-trivial PNGs do),
+   *  the mesh quad shrinks to the tight art rect and the UVs map
+   *  only that region. Corner deformation operates on the visible
+   *  art instead of the texture's transparent borders.
+   *
+   *  Sheet sprites skip the visible-bounds shrink — their alpha map
+   *  is for the whole sheet, not any single frame. Per-frame bounds
+   *  is a future refinement. */
+  private createMesh(
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): Mesh {
+    const texture = this.resolveTexture(ms.asset, assets);
+    const w = texture.width || 100;
+    const h = texture.height || 100;
+    const ax = ms.anchor.x;
+    const ay = ms.anchor.y;
+    const visibleBounds = this.resolveVisibleBounds(ms, assets);
+    const layout = computeMeshLayout(w, h, ax, ay, visibleBounds);
+    const off = ms.cornerOffsets ?? {
+      tl: { x: 0, y: 0 },
+      tr: { x: 0, y: 0 },
+      bl: { x: 0, y: 0 },
+      br: { x: 0, y: 0 },
+    };
+    const positions = new Float32Array([
+      layout.left + off.tl.x, layout.top + off.tl.y,
+      layout.right + off.tr.x, layout.top + off.tr.y,
+      layout.left + off.bl.x, layout.bottom + off.bl.y,
+      layout.right + off.br.x, layout.bottom + off.br.y,
+    ]);
+    const uvs = new Float32Array([
+      layout.u0, layout.v0,
+      layout.u1, layout.v0,
+      layout.u0, layout.v1,
+      layout.u1, layout.v1,
+    ]);
+    // Two triangles forming the quad: tl-tr-bl, tr-br-bl. Counter-
+    // clockwise winding so default culling (if any) doesn't drop us.
+    const indices = new Uint32Array([0, 1, 2, 1, 3, 2]);
+    const geometry = new MeshGeometry({ positions, uvs, indices });
+    const mesh = new Mesh({ geometry, texture });
+    mesh.cursor = "grab";
+    mesh.eventMode = "static";
+    mesh.hitArea = new Rectangle(
+      layout.left,
+      layout.top,
+      layout.right - layout.left,
+      layout.bottom - layout.top,
+    );
+
+    mesh.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      this.onSelect?.(ms.id);
+      this.dragState = { id: ms.id, lastX: e.global.x, lastY: e.global.y };
+      mesh.cursor = "grabbing";
+    });
+
+    return mesh;
+  }
+
+  /** Look up the asset's visible bounds for this sprite, returning
+   *  undefined when the sprite is a sheet (alphaMap is for the whole
+   *  sheet image, not per-frame), has no asset, or the asset's alpha
+   *  map didn't yield a useful rect. Callers fall back to full
+   *  texture bounds when undefined. */
+  private resolveVisibleBounds(
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): { x: number; y: number; width: number; height: number } | undefined {
+    if (ms.sheet) return undefined;
+    if (!ms.asset) return undefined;
+    return assets[ms.asset]?.visibleBounds;
+  }
+
+  /** Recompute mesh vertex positions from current texture size + anchor
+   *  + effective corner offsets (base + active pose contributions).
+   *  Cheap — 8 float writes + buffer.update() to push to GPU. Called
+   *  from tickBindings every frame so pose-driven corner offsets
+   *  animate continuously as the source channel value changes (head-
+   *  turn perspective skew that tracks HeadYaw, etc.). */
+  private updateMeshVertices(
+    mesh: Mesh,
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+    opts?: PoseEvalOptions,
+  ): void {
+    const tex = mesh.texture;
+    const w = tex.width;
+    const h = tex.height;
+    if (w <= 0 || h <= 0) return;
+    const ax = ms.anchor.x;
+    const ay = ms.anchor.y;
+    const visibleBounds = this.resolveVisibleBounds(ms, assets);
+    const layout = computeMeshLayout(w, h, ax, ay, visibleBounds);
+    // Effective offsets = base + Σ (pose binding progress × pose corner
+    // targets). Returns null when nothing's contributing — that means
+    // the sprite was promoted to mesh for a binding declaring corner
+    // fields but currently sitting at progress=0 with all-zero values.
+    // Treat as zero-deformation so the mesh stays flush.
+    const effective: ResolvedCornerOffsets =
+      applyPoseCornerOffsets(ms, opts) ?? {
+        tl: { x: 0, y: 0 },
+        tr: { x: 0, y: 0 },
+        bl: { x: 0, y: 0 },
+        br: { x: 0, y: 0 },
+      };
+    const positions = mesh.geometry.positions;
+    positions[0] = layout.left + effective.tl.x;
+    positions[1] = layout.top + effective.tl.y;
+    positions[2] = layout.right + effective.tr.x;
+    positions[3] = layout.top + effective.tr.y;
+    positions[4] = layout.left + effective.bl.x;
+    positions[5] = layout.bottom + effective.bl.y;
+    positions[6] = layout.right + effective.br.x;
+    positions[7] = layout.bottom + effective.br.y;
+    // Re-assign positions through the setter rather than calling
+    // buffer.update() directly. Pixi 8's Buffer.update() with no arg
+    // leaves `_updateSize` undefined when the buffer was constructed
+    // (since the constructor doesn't initialize that field), so the
+    // GPU upload uses an undefined byte count and the new vertex
+    // values never reach the shader. The positions setter routes
+    // through `setDataWithSize(positions, positions.length, true)`,
+    // which sets `_updateSize` to the correct byte count AND emits
+    // the "update" event the renderer listens for. Same-reference
+    // assignment is fine — the setter still emits.
+    mesh.geometry.positions = positions;
+    // Bounding-rect hit area tracks the visible-bounds rect (or full
+    // bounds when none) — not the deformed corners — so clicks in
+    // the deformed region don't miss when the user pushes a corner
+    // significantly outward. Slight over-coverage on the
+    // not-currently-visible side is fine; under-coverage isn't.
+    mesh.hitArea = new Rectangle(
+      layout.left,
+      layout.top,
+      layout.right - layout.left,
+      layout.bottom - layout.top,
+    );
+  }
+
+  private applyTransform(
+    renderable: Renderable,
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): void {
     // Note: the per-frame ticker (tickBindings) overrides x/y/rotation/
     // scale/alpha every frame from the modifier runner. This method only
     // matters for first-render correctness before the next ticker fires
     // and for setting anchor (which the ticker doesn't touch).
-    // Sprite is a child of `world`, which is centered on the canvas.
+    // Renderable is a child of `world`, which is centered on the canvas.
     // So model x/y are already in centered world coords — no offset needed.
-    sprite.x = ms.transform.x;
-    sprite.y = ms.transform.y;
-    sprite.rotation = (ms.transform.rotation * Math.PI) / 180;
-    sprite.scale.set(ms.transform.scaleX, ms.transform.scaleY);
-    sprite.visible = ms.visible;
-    sprite.anchor.set(ms.anchor.x, ms.anchor.y);
+    renderable.x = ms.transform.x;
+    renderable.y = ms.transform.y;
+    renderable.rotation = (ms.transform.rotation * Math.PI) / 180;
+    renderable.scale.set(ms.transform.scaleX, ms.transform.scaleY);
+    renderable.visible = ms.visible;
+    if (renderable instanceof PixiSprite) {
+      renderable.anchor.set(ms.anchor.x, ms.anchor.y);
+    } else {
+      // Mesh: anchor is baked into vertex positions, recompute now so
+      // the first render paints correctly before tickBindings fires.
+      this.updateMeshVertices(renderable, ms, assets);
+    }
   }
 }
 

@@ -105,7 +105,9 @@ class GlobalMouseSource {
       const w = window.screen.width || 1;
       const h = window.screen.height || 1;
       const nx = (p.x / w) * 2 - 1;
-      const ny = (p.y / h) * 2 - 1;
+      // Y inverted to match MouseY's Y-up convention (see MouseSource
+      // header). Mouse at top of screen → MouseScreenY = +1.
+      const ny = -((p.y / h) * 2 - 1);
       inputBus.publish("MouseScreenX", nx);
       inputBus.publish("MouseScreenY", ny);
       return;

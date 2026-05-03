@@ -201,14 +201,44 @@ export function applyTransformBindings(
 
 // ---------- Pose ----------
 
+/** Options for pose-binding evaluation.
+ *
+ *  Two override paths, evaluated in priority order (peak wins over
+ *  rest if a binding somehow ends up in both):
+ *
+ *  - `forcePeakBindingIds`: bindings whose progress is forced to 1.
+ *    Used by canvas-edit mode — the binding being dragged on canvas
+ *    needs live feedback even when the source channel isn't engaged.
+ *  - `forceRestBindingIds`: bindings whose progress is forced to 0.
+ *    Used by the eye-icon mute toggle — the user has explicitly
+ *    silenced this binding for testing / debugging without deleting
+ *    it. With all bindings muted, the sprite returns to base.
+ *
+ *  Bindings not in either set follow the channel-driven default.
+ */
+export interface PoseEvalOptions {
+  forcePeakBindingIds?: ReadonlySet<string>;
+  forceRestBindingIds?: ReadonlySet<string>;
+}
+
 /**
  * Compute progress [0, 1] for a pose binding from its current channel
  * value. Returns 0 when the channel can't produce a number (skip the
  * binding entirely). Mirrors evaluateLinearMapping's semantics but
  * always outputs into [0, 1] range — pose body provides the output
  * targets per-property.
+ *
+ * Override paths (in priority order, peak wins):
+ *   - `opts.forcePeakBindingIds.has(b.id)` → 1 (canvas-edit live preview).
+ *   - `opts.forceRestBindingIds.has(b.id)` → 0 (eye-icon mute).
+ * Otherwise channel-driven, possibly clamped to [0, 1].
  */
-export function evaluatePoseProgress(b: PoseBinding): number {
+export function evaluatePoseProgress(
+  b: PoseBinding,
+  opts?: PoseEvalOptions,
+): number {
+  if (opts?.forcePeakBindingIds?.has(b.id)) return 1;
+  if (opts?.forceRestBindingIds?.has(b.id)) return 0;
   const channelValue = inputBus.get(b.input);
   const num = valueAsNumber(channelValue);
   if (num === null) return 0;
@@ -238,11 +268,14 @@ export function evaluatePoseProgress(b: PoseBinding): number {
  * offsets — added to base + transform-binding overrides BEFORE
  * modifiers run, so springs / drag still smooth the combined target.
  */
-export function applyPoseBindings(sprite: Sprite): Partial<Transform> {
+export function applyPoseBindings(
+  sprite: Sprite,
+  opts?: PoseEvalOptions,
+): Partial<Transform> {
   const offsets: Partial<Transform> = {};
   for (const b of sprite.bindings) {
     if (!isPoseBinding(b)) continue;
-    const progress = evaluatePoseProgress(b);
+    const progress = evaluatePoseProgress(b, opts);
     if (progress === 0) continue;
 
     // Per-property additive contribution (pose × progress).
@@ -325,4 +358,85 @@ export function applyPoseBindings(sprite: Sprite): Partial<Transform> {
     if (dScaleY !== 0) offsets.scaleY = (offsets.scaleY ?? 0) + dScaleY;
   }
   return offsets;
+}
+
+// ---------- Corner-offset composition ----------
+
+/** Concrete (non-partial) corner-offset shape used by the runtime. */
+export type ResolvedCornerOffsets = {
+  tl: { x: number; y: number };
+  tr: { x: number; y: number };
+  bl: { x: number; y: number };
+  br: { x: number; y: number };
+};
+
+const CORNERS = ["tl", "tr", "bl", "br"] as const;
+
+/**
+ * Compose final per-corner pixel offsets from base + every active pose
+ * binding's progress-scaled `poseCornerOffsets`. Returns null when the
+ * sprite has no corner deformation in play (neither base offsets nor
+ * any non-zero pose contribution) — caller can use this as a quick
+ * "do I need a mesh at all" test.
+ */
+export function applyPoseCornerOffsets(
+  sprite: Sprite,
+  opts?: PoseEvalOptions,
+): ResolvedCornerOffsets | null {
+  const base = sprite.cornerOffsets;
+  let hasAnyContribution = !!base;
+
+  // Pre-collect pose contributions so we can early-out when there's
+  // nothing to do (no base, no active pose corner targets).
+  const result: ResolvedCornerOffsets = {
+    tl: { x: base?.tl.x ?? 0, y: base?.tl.y ?? 0 },
+    tr: { x: base?.tr.x ?? 0, y: base?.tr.y ?? 0 },
+    bl: { x: base?.bl.x ?? 0, y: base?.bl.y ?? 0 },
+    br: { x: base?.br.x ?? 0, y: base?.br.y ?? 0 },
+  };
+
+  for (const b of sprite.bindings) {
+    if (!isPoseBinding(b)) continue;
+    const corners = b.poseCornerOffsets;
+    if (!corners) continue;
+    const progress = evaluatePoseProgress(b, opts);
+    if (progress === 0) continue;
+    for (const corner of CORNERS) {
+      const off = corners[corner];
+      if (!off) continue;
+      if (typeof off.x === "number" && off.x !== 0) {
+        result[corner].x += off.x * progress;
+        hasAnyContribution = true;
+      }
+      if (typeof off.y === "number" && off.y !== 0) {
+        result[corner].y += off.y * progress;
+        hasAnyContribution = true;
+      }
+    }
+  }
+
+  return hasAnyContribution ? result : null;
+}
+
+/**
+ * "Does this sprite need to render as a Pixi Mesh?" — true if it has
+ * any base corner offsets OR any pose binding declaring corner targets
+ * (regardless of whether they're currently progress=0; we want to
+ * promote at config time, not flicker between Sprite/Mesh as channel
+ * values cross the inMin threshold).
+ *
+ * Used by the Pixi runtime to pick the renderable class for each
+ * sprite in syncSprites.
+ */
+export function spriteNeedsMesh(sprite: Sprite): boolean {
+  if (sprite.cornerOffsets) return true;
+  for (const b of sprite.bindings) {
+    if (!isPoseBinding(b)) continue;
+    const corners = b.poseCornerOffsets;
+    if (!corners) continue;
+    // Treat "has the field" as "wants mesh" so the user can drag a
+    // corner up to non-zero without the renderable churning.
+    if (corners.tl || corners.tr || corners.bl || corners.br) return true;
+  }
+  return false;
 }

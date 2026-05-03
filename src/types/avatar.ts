@@ -65,7 +65,45 @@ export interface Sprite {
    * id is also a no-op (helpful when copy-pasting between avatars).
    */
   clipBy?: SpriteId;
+  /**
+   * Per-corner pixel offsets (additive on top of the sprite's rect
+   * bounds) for non-affine deformation. When set, the sprite renders
+   * as a 4-vertex Pixi Mesh — true perspective skew that affine pose
+   * bindings can't express. Each corner's offset shifts its vertex by
+   * that many pixels in sprite-local space.
+   *
+   * Use case: "head turning right" looks much more natural with the
+   * right side compressed and the left side expanded along the
+   * vertical axis (perspective foreshortening), which can't be
+   * achieved with scale + rotation alone.
+   *
+   * Trade-offs (accepted for v1):
+   *   - Hit-testing falls back to bounding-rect (no per-pixel alpha)
+   *     while corner offsets are active. Alpha-map hit detection
+   *     doesn't track mesh deformation.
+   *   - Mask clipping uses the undeformed shape — animated masks of
+   *     corner-deformed sprites may visibly mismatch at the edges.
+   *
+   * Most rigs use slight offsets for subtle perspective; the
+   * trade-offs are negligible in that range.
+   */
+  cornerOffsets?: {
+    tl: { x: number; y: number };
+    tr: { x: number; y: number };
+    bl: { x: number; y: number };
+    br: { x: number; y: number };
+  };
 }
+
+/** Default-zero corner offsets, used when toggling 4-corner mode on
+ *  for the first time. Exported so the Properties UI can reach for
+ *  the same defaults the runtime expects. */
+export const DEFAULT_CORNER_OFFSETS = {
+  tl: { x: 0, y: 0 },
+  tr: { x: 0, y: 0 },
+  bl: { x: 0, y: 0 },
+  br: { x: 0, y: 0 },
+};
 
 // ---------------------------------------------------------------- Sprite Sheet
 
@@ -243,6 +281,30 @@ export interface PoseBinding {
    * tween body's `targets` field. Properties not listed have no offset.
    */
   pose: Partial<Transform>;
+  /**
+   * Per-corner pixel offset deltas applied at progress=1, additive on
+   * top of the sprite's base `cornerOffsets`. Each corner's `x` / `y`
+   * is scaled by the binding's progress and summed across all active
+   * pose bindings, then added to the base before the mesh quad
+   * vertices are computed.
+   *
+   * This is what makes pose bindings able to express non-affine
+   * deformation — e.g. a "head turn right" pose with `tr: { x: -30 }`
+   * and `br: { x: -30 }` reads as actual perspective foreshortening
+   * even on a flat 2D sprite, which scaleX alone can't reproduce.
+   *
+   * When ANY pose binding on a sprite declares non-empty
+   * poseCornerOffsets, the sprite is auto-promoted to mesh rendering
+   * even if its base `cornerOffsets` is unset. So you don't have to
+   * enable "4-Corner Mesh" on the sprite first — adding corner targets
+   * to a pose just works.
+   */
+  poseCornerOffsets?: {
+    tl?: { x?: number; y?: number };
+    tr?: { x?: number; y?: number };
+    bl?: { x?: number; y?: number };
+    br?: { x?: number; y?: number };
+  };
   /**
    * Optional pivot point for scale + rotation within this pose,
    * expressed as a pixel offset from the sprite's anchor (same units
@@ -582,6 +644,18 @@ export interface AssetEntry {
    *  couldn't be read (cross-origin or other browser restrictions); hit
    *  testing falls back to rectangular bounds in that case. */
   alphaMap?: Uint8Array;
+  /**
+   * Tight bounding box of non-transparent pixels (alpha > threshold)
+   * in texture coords (top-left origin). When set, mesh sprites + the
+   * editor's free-transform overlay use this rect instead of the full
+   * texture, so corner handles and the bounding outline align with
+   * the visible art instead of including transparent borders.
+   *
+   * Computed once at asset load by scanning `alphaMap`. Undefined
+   * when `alphaMap` is unavailable, or when the texture is fully
+   * transparent (rare — caller falls back to full bounds).
+   */
+  visibleBounds?: { x: number; y: number; width: number; height: number };
 }
 
 export const DEFAULT_TRANSFORM: Transform = {

@@ -15,6 +15,7 @@ import {
   Keyboard,
   Mic,
   MicOff,
+  MousePointer,
   Settings,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -145,6 +146,9 @@ export function StatusBar() {
   const holdProgress = useInputValue<number | null>("MicHoldProgress");
   const lastKey = useInputValue<string | null>("KeyEvent");
   const region = useInputValue<string | null>("KeyRegion");
+  const mouseX = useInputValue<number | null>("MouseX");
+  const mouseY = useInputValue<number | null>("MouseY");
+  const mouseInside = useInputValue<boolean | null>("MouseInside");
   const headYaw = useInputValue<number>("HeadYaw") ?? 0;
   const headPitch = useInputValue<number>("HeadPitch") ?? 0;
   const headRoll = useInputValue<number>("HeadRoll") ?? 0;
@@ -307,6 +311,31 @@ export function StatusBar() {
         {showMicPopover && (
           <ThresholdPopover onClose={() => setShowMicPopover(false)} />
         )}
+      </section>
+
+      {/* ============================ MOUSE SECTION ============================ */}
+      <section
+        className="status-section status-section-right"
+        title="Live MouseX / MouseY values published to bindings. Range -1..1 over the canvas. Y is up-positive: +1 at top, -1 at bottom. Useful while configuring pose bindings on these channels — the value you see here is exactly what the binding's input mapping reads."
+      >
+        <MousePointer
+          size={14}
+          className={`status-icon ${mouseInside ? "live" : ""}`}
+        />
+        <div className="status-values">
+          <span className="status-value">
+            <span className="status-label">X</span>
+            <span className="status-num">
+              {mouseX != null ? mouseX.toFixed(2) : "—"}
+            </span>
+          </span>
+          <span className="status-value">
+            <span className="status-label">Y</span>
+            <span className="status-num">
+              {mouseY != null ? mouseY.toFixed(2) : "—"}
+            </span>
+          </span>
+        </div>
       </section>
 
       {/* ============================ KEYBOARD SECTION ============================ */}

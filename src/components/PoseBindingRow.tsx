@@ -15,7 +15,7 @@
 // editing, same shape as the AnimationRow's tween-target editor.
 
 import { useMemo, useState } from "react";
-import { Crosshair, Trash2 } from "lucide-react";
+import { Crosshair, Eye, EyeOff, Trash2 } from "lucide-react";
 import { NumberField } from "./NumberField";
 import {
   type AvatarModel,
@@ -57,9 +57,13 @@ export function PoseBindingRow({
 }: PoseBindingRowProps) {
   const activePoseBinding = useEditor((s) => s.activePoseBinding);
   const setActivePoseBinding = useEditor((s) => s.setActivePoseBinding);
+  const mutedPoseBindings = useEditor((s) => s.mutedPoseBindings);
+  const toggleMutePoseBinding = useEditor((s) => s.toggleMutePoseBinding);
+  const unmutePoseBinding = useEditor((s) => s.unmutePoseBinding);
   const isActiveOnCanvas =
     activePoseBinding?.spriteId === spriteId &&
     activePoseBinding?.bindingId === binding.id;
+  const isMuted = mutedPoseBindings.has(binding.id);
 
   const toggleCanvasEdit = (): void => {
     if (isActiveOnCanvas) {
@@ -108,23 +112,43 @@ export function PoseBindingRow({
           → pose
         </span>
         <button
+          className={`pose-binding-canvas-edit ${isMuted ? "muted" : ""}`}
+          onClick={() => toggleMutePoseBinding(binding.id)}
+          title={
+            isMuted
+              ? "Unmute — let this binding contribute again. Channel value drives the pose normally."
+              : "Mute — force this binding's progress to 0 so it contributes nothing. Useful for A/B testing what each binding adds, or returning the sprite to its base state when channels are otherwise active."
+          }
+          aria-label="Toggle pose binding mute"
+          aria-pressed={isMuted}
+        >
+          {isMuted ? <EyeOff size={12} /> : <Eye size={12} />}
+        </button>
+        <button
           className={`pose-binding-canvas-edit ${
             isActiveOnCanvas ? "active" : ""
           }`}
           onClick={toggleCanvasEdit}
           title={
             isActiveOnCanvas
-              ? "Stop editing pivot on canvas"
-              : "Edit pivot on canvas — drag the orange dot that appears at the pivot location to reposition it visually instead of typing X/Y."
+              ? "Stop editing on canvas"
+              : "Edit pose on canvas — drag the bounding box's corner handles to deform the mesh, the rotation handle to rotate, the orange dot to set the pivot. Auto-previews at peak while active."
           }
-          aria-label="Toggle on-canvas pivot editing"
+          aria-label="Toggle on-canvas pose editing"
           aria-pressed={isActiveOnCanvas}
         >
           <Crosshair size={12} />
         </button>
         <button
           className="binding-delete"
-          onClick={onRemove}
+          onClick={() => {
+            // Drop mute state first so we don't leave a stale entry
+            // in the runtime force-rest set. The runtime would
+            // silently ignore it (binding wouldn't be found at
+            // evaluate time), but it's tidier to clean up.
+            unmutePoseBinding(binding.id);
+            onRemove();
+          }}
           title="Remove pose binding"
           aria-label="Remove pose binding"
         >
@@ -201,8 +225,121 @@ export function PoseBindingRow({
         })}
       </div>
 
+      <CornerOffsetsEditor binding={binding} onChange={onChange} />
+
       <PivotEditor binding={binding} onChange={onChange} />
     </li>
+  );
+}
+
+/**
+ * Per-corner pixel-offset editor for a pose binding. Collapsed by
+ * default since most poses don't need non-affine deformation. Expands
+ * to 4 labeled corner rows with X/Y NumberFields each — same shape as
+ * the sprite's base 4-Corner Mesh editor in the Properties panel,
+ * because the mental model is identical (these values are deltas
+ * applied at progress=1, on top of base).
+ *
+ * Adding any corner target auto-promotes the sprite to mesh rendering;
+ * the user doesn't have to enable 4-Corner Mesh on the sprite first.
+ */
+interface CornerOffsetsEditorProps {
+  binding: PoseBinding;
+  onChange: (patch: Partial<PoseBinding>) => void;
+}
+
+const CORNER_LABELS: Record<"tl" | "tr" | "bl" | "br", string> = {
+  tl: "Top-Left",
+  tr: "Top-Right",
+  bl: "Bottom-Left",
+  br: "Bottom-Right",
+};
+
+function CornerOffsetsEditor({
+  binding,
+  onChange,
+}: CornerOffsetsEditorProps) {
+  const corners = binding.poseCornerOffsets;
+  const hasAny = corners !== undefined;
+
+  const [expanded, setExpanded] = useState(hasAny);
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className="pose-binding-pivot-toggle"
+        onClick={() => setExpanded(true)}
+        title="Drive non-affine corner deformation from this pose. Use case: head-turn poses where the far side of the sprite compresses (perspective foreshortening) — affine scaleX can't reproduce this."
+      >
+        + Corner Offsets {hasAny ? "✓" : ""}
+      </button>
+    );
+  }
+
+  const updateCorner = (
+    corner: "tl" | "tr" | "bl" | "br",
+    axis: "x" | "y",
+    value: number,
+  ): void => {
+    const cur = binding.poseCornerOffsets ?? {};
+    const curCorner = cur[corner] ?? {};
+    onChange({
+      poseCornerOffsets: {
+        ...cur,
+        [corner]: { ...curCorner, [axis]: value },
+      },
+    });
+  };
+
+  const clearCorners = (): void => {
+    onChange({ poseCornerOffsets: undefined });
+    setExpanded(false);
+  };
+
+  return (
+    <div className="pose-binding-corners">
+      <div className="pose-binding-corners-header">
+        <span>Corner Offsets at progress=1</span>
+        <button
+          type="button"
+          className="pose-binding-pivot-reset"
+          onClick={clearCorners}
+          title="Disable corner deformation on this pose binding."
+        >
+          Clear
+        </button>
+      </div>
+      {(["tl", "tr", "bl", "br"] as const).map((corner) => {
+        const off = corners?.[corner];
+        return (
+          <div key={corner} className="corner-mesh-row">
+            <span className="corner-mesh-label">{CORNER_LABELS[corner]}</span>
+            <div className="prop-pair">
+              <NumberField
+                label="X"
+                value={off?.x ?? 0}
+                onChange={(v) => updateCorner(corner, "x", v)}
+                step={1}
+                precision={0}
+              />
+              <NumberField
+                label="Y"
+                value={off?.y ?? 0}
+                onChange={(v) => updateCorner(corner, "y", v)}
+                step={1}
+                precision={0}
+              />
+            </div>
+          </div>
+        );
+      })}
+      <div className="pose-binding-pivot-hint">
+        Pixel offsets per corner at peak progress. Stacks with the
+        sprite's base corner offsets (if any) and other pose bindings.
+        Auto-promotes the sprite to mesh rendering.
+      </div>
+    </div>
   );
 }
 

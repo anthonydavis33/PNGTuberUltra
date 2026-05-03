@@ -464,7 +464,11 @@ export async function buildBongoCatSample(): Promise<{
         inMin: -1,
         inMax: 1,
         clamped: true,
-        pose: { y: 25 },
+        // Negative pose.y because MouseY is Y-up: mouse-up → MouseY +1,
+        // and we want the paw to follow the cursor up (negative
+        // screen Y). Same logic for the other MouseY pose bindings
+        // below (head, pupils). See MouseSource header for convention.
+        pose: { y: -25 },
       },
       // Click → press down: tiny y-shift + flatten to mimic the paw
       // pressing the mouse button.
@@ -678,7 +682,11 @@ export async function buildHeadPoseSample(): Promise<{
     inMin: -1,
     inMax: 1,
     clamped: true,
-    pose: { y: 25, scaleY: -0.05 },
+    // Negative pose.y because MouseY is Y-up (mouse-up → +1, peaks
+    // progress to 1). We want the head to follow the cursor: mouse
+    // up → head up → screen Y negative. ScaleY positive so the head
+    // stretches up when looking up (chin-anchored stretch effect).
+    pose: { y: -25, scaleY: 0.05 },
   };
   const micBobBinding: PoseBinding = {
     id: "b-pose-mic-bob",
@@ -740,7 +748,9 @@ export async function buildHeadPoseSample(): Promise<{
       inMin: -1,
       inMax: 1,
       clamped: true,
-      pose: { y: 6 },
+      // Negative pose.y to match MouseY's Y-up convention — pupil
+      // tracks cursor up = pupil moves up in screen.
+      pose: { y: -6 },
     },
   ];
 

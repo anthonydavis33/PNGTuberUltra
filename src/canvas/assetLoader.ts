@@ -47,6 +47,50 @@ function extractAlphaMap(img: HTMLImageElement): Uint8Array | undefined {
   return alpha;
 }
 
+/** Alpha threshold (0..255) used for both hit testing and visible-
+ *  bounds computation. Pixels at or below count as transparent.
+ *  Matches the threshold used by the per-pixel hit test in PixiApp. */
+const ALPHA_THRESHOLD = 10;
+
+/**
+ * Compute the tight bounding rectangle of non-transparent pixels.
+ * One full O(w·h) pass through the alpha map at asset load time —
+ * caller stores the result on the AssetEntry so the runtime can
+ * align mesh quads + the editor's free-transform overlay to the
+ * visible art instead of the full texture rect.
+ *
+ * Returns undefined for fully transparent textures (no pixel above
+ * threshold) — caller falls back to full bounds in that case.
+ */
+function computeVisibleBounds(
+  alpha: Uint8Array,
+  w: number,
+  h: number,
+): { x: number; y: number; width: number; height: number } | undefined {
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y++) {
+    const rowStart = y * w;
+    for (let x = 0; x < w; x++) {
+      if (alpha[rowStart + x] > ALPHA_THRESHOLD) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return undefined; // fully transparent
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
 export async function loadFileAsAsset(file: File): Promise<AssetEntry> {
   const id = genAssetId();
   const blobUrl = URL.createObjectURL(file);
@@ -64,6 +108,11 @@ export async function loadFileAsAsset(file: File): Promise<AssetEntry> {
   const texture = Texture.from(img);
   Assets.cache.set(id, texture);
 
+  const alphaMap = extractAlphaMap(img);
+  const visibleBounds = alphaMap
+    ? computeVisibleBounds(alphaMap, img.naturalWidth, img.naturalHeight)
+    : undefined;
+
   return {
     id,
     name: file.name.replace(SUPPORTED_EXTENSIONS, ""),
@@ -72,7 +121,8 @@ export async function loadFileAsAsset(file: File): Promise<AssetEntry> {
     mimeType: file.type || "image/png",
     width: img.naturalWidth,
     height: img.naturalHeight,
-    alphaMap: extractAlphaMap(img),
+    alphaMap,
+    visibleBounds,
   };
 }
 
@@ -101,6 +151,11 @@ export async function loadBytesAsAsset(args: {
   const texture = Texture.from(img);
   Assets.cache.set(args.id, texture);
 
+  const alphaMap = extractAlphaMap(img);
+  const visibleBounds = alphaMap
+    ? computeVisibleBounds(alphaMap, img.naturalWidth, img.naturalHeight)
+    : undefined;
+
   return {
     id: args.id,
     name: args.name,
@@ -109,7 +164,8 @@ export async function loadBytesAsAsset(args: {
     mimeType: args.mimeType,
     width: img.naturalWidth,
     height: img.naturalHeight,
-    alphaMap: extractAlphaMap(img),
+    alphaMap,
+    visibleBounds,
   };
 }
 

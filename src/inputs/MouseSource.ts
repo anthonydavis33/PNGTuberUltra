@@ -9,6 +9,13 @@
 //   MouseX / MouseY  — -1..1, normalized over the canvas bounding rect.
 //     0 = canvas center; ±1 = canvas edge. Values outside the canvas
 //     clamp to ±1 so transform bindings stay bounded.
+//     MouseX: -1 = left edge, +1 = right edge.
+//     MouseY: +1 = top edge, -1 = bottom edge (Y-up convention).
+//     We deliberately invert from raw screen coords (where +Y is down)
+//     because rigs treat "mouse up" as a positive signal — joystick /
+//     webcam HeadPitch / etc. all use Y-up. With this convention,
+//     pose bindings like `MouseY → pose: { y: -30 }` produce intuitive
+//     "head tilts up when mouse moves up" behavior.
 //   MouseLeft / MouseRight / MouseMiddle  — boolean while the button is
 //     held. Coerce to 0/1 cleanly in transform bindings (linear mapping
 //     inMin=0/inMax=1 makes a click trigger a continuous output).
@@ -123,8 +130,10 @@ class MouseSource {
 
     // Normalize to [-1, 1] with 0 at canvas center, then clamp so
     // off-canvas movements don't drive bindings past their mapped range.
+    // Y is inverted from raw screen coords so that "up" is positive
+    // — see the file header for rationale.
     const nx = Math.max(-1, Math.min(1, (e.clientX - cx) / halfW));
-    const ny = Math.max(-1, Math.min(1, (e.clientY - cy) / halfH));
+    const ny = Math.max(-1, Math.min(1, -(e.clientY - cy) / halfH));
 
     const inside =
       e.clientX >= rect.left &&

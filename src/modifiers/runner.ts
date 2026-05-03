@@ -14,6 +14,7 @@
 import {
   applyPoseBindings,
   applyTransformBindings,
+  type PoseEvalOptions,
 } from "../bindings/evaluate";
 import { type AnimationRunner } from "../animations/runner";
 import {
@@ -76,6 +77,11 @@ export class ModifierRunner {
    *  off it for every sprite (including parents reached via parent-
    *  modifier recursion) so animations land before modifier passes. */
   private animationRunner: AnimationRunner | null = null;
+  /** Pose-eval options for the current frame. PixiApp sets this in
+   *  beginFrame to surface the actively-edited binding to the
+   *  evaluator so its progress gets forced to 1 (live preview while
+   *  the user is dragging handles or typing pose values). */
+  private poseOpts: PoseEvalOptions | undefined;
 
   // Per-frame caches — cleared by beginFrame()
   private worldCache = new Map<string, EffectiveTransform>();
@@ -88,10 +94,13 @@ export class ModifierRunner {
     this.animationRunner = runner;
   }
 
-  /** Call once at the start of each frame. */
-  beginFrame(): void {
+  /** Call once at the start of each frame. `poseOpts` lets the caller
+   *  pass through pose-evaluation overrides (notably the actively-
+   *  edited binding id, whose progress is forced to 1). */
+  beginFrame(poseOpts?: PoseEvalOptions): void {
     this.worldCache.clear();
     this.visiting.clear();
+    this.poseOpts = poseOpts;
   }
 
   /** Drop state for modifiers that no longer exist in the model. */
@@ -168,7 +177,7 @@ export class ModifierRunner {
 
   private baseTransform(sprite: Sprite): EffectiveTransform {
     const overrides = applyTransformBindings(sprite);
-    const pose = applyPoseBindings(sprite);
+    const pose = applyPoseBindings(sprite, this.poseOpts);
     // Pose offsets and animation tween offsets both stack ADDITIVELY on
     // top of the binding-resolved value. Order between pose and tween
     // doesn't matter — they're independent additions.
