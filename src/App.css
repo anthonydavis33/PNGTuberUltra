@@ -2796,6 +2796,98 @@ html.transparent-bg #root {
   overflow-y: auto;
 }
 
+/* Twitch chat popover — narrower than the keyboard popover (only
+ * holds a channel input + auto-connect toggle). Bottom-right anchored
+ * like the keyboard popover, since the Twitch gear sits in the
+ * secondary row's right cluster. */
+.twitch-popover {
+  left: auto;
+  right: 12px;
+  width: 320px;
+}
+
+.popover-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.popover-text-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.popover-text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.popover-button-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.popover-button-row > button {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.popover-button-row > button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.popover-button-row > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.popover-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.popover-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 12px 0 0 0;
+}
+
+.popover-hint code {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: var(--text);
+}
+
 .settings-popover-header,
 .threshold-popover-header {
   display: flex;

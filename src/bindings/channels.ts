@@ -26,6 +26,80 @@ import {
   VISEMES,
 } from "../types/avatar";
 import { WEBCAM_CHANNELS } from "../inputs/WebcamSource";
+import {
+  GAMEPAD_CONTINUOUS_CHANNELS,
+  GAMEPAD_BOOLEAN_CHANNELS,
+} from "../inputs/GamepadSource";
+import { getMidiSource } from "../inputs/MidiSource";
+import { HEART_RATE_CHANNELS } from "../inputs/HeartRateSource";
+import { TWITCH_CHANNELS } from "../inputs/TwitchChatSource";
+
+/** Twitch event channels grouped by binding kind. The numeric ones
+ *  (TwitchBits) are continuous; everything else is discrete (string
+ *  message / user / command names) or boolean (TwitchChatActive). */
+const TWITCH_CONTINUOUS = ["TwitchBits"] as const;
+const TWITCH_DISCRETE = [
+  "TwitchChatMessage",
+  "TwitchChatUser",
+  "TwitchChatCommand",
+  "TwitchSubscriber",
+] as const;
+const TWITCH_BOOLEAN = ["TwitchChatActive"] as const;
+void TWITCH_CHANNELS; // ref-keep; canonical export from the source
+
+/** Heart rate splits naturally: HeartRate is a continuous BPM number
+ *  (perfect for linear/stateMap mappings) and HeartRateActive is a
+ *  boolean gate (useful as a visibility predicate — "show this overlay
+ *  only when my HR strap is alive"). */
+const HEART_RATE_CONTINUOUS = ["HeartRate"] as const;
+const HEART_RATE_BOOLEAN = ["HeartRateActive"] as const;
+// Non-null reference — silences unused-import warnings if HEART_RATE_CHANNELS
+// stops being used directly (kept around for future "list all" callsites).
+void HEART_RATE_CHANNELS;
+
+/** Always-on MIDI channels. The MidiCC{N} / MidiNote{N} dynamic
+ *  channels are appended at runtime by querying the MidiSource for its
+ *  set of channels that have actually been published — keeps the
+ *  picker focused on controllers the user has actually touched, instead
+ *  of dumping all 256 possible CC + note channels into the dropdown. */
+const MIDI_CONTINUOUS_BASE = [
+  "MidiCCAny",
+  "MidiCCNumber",
+  "MidiNoteAny",
+  "MidiVelocity",
+  "MidiPitchBend",
+  "MidiAftertouch",
+] as const;
+const MIDI_BOOLEAN_BASE = ["MidiNoteOn"] as const;
+
+/** Categorize a dynamically-discovered MIDI channel by its name prefix.
+ *  CC channels publish 0..1 (continuous); Note channels publish boolean
+ *  (held / released). */
+function midiChannelKind(name: string): "continuous" | "boolean" | "skip" {
+  if (name.startsWith("MidiCC") && name !== "MidiCCAny" && name !== "MidiCCNumber") {
+    return "continuous";
+  }
+  if (name.startsWith("MidiNote") && name !== "MidiNoteAny" && name !== "MidiNoteOn") {
+    return "boolean";
+  }
+  return "skip"; // already covered by the base lists or unknown
+}
+
+function dynamicMidiChannels(): { continuous: string[]; boolean: string[] } {
+  const out = { continuous: [] as string[], boolean: [] as string[] };
+  // Lazy-init guard: if MidiSource hasn't been constructed yet, skip.
+  // The picker still works — base channels are always in the static
+  // arrays — but no dynamic CC / Note rows appear until the user has
+  // touched their controller.
+  for (const c of getMidiSource().getActiveChannels()) {
+    const kind = midiChannelKind(c);
+    if (kind === "continuous") out.continuous.push(c);
+    else if (kind === "boolean") out.boolean.push(c);
+  }
+  out.continuous.sort();
+  out.boolean.sort();
+  return out;
+}
 
 /** Mouse channels that publish numbers (MouseX/Y, MouseWheel) — go in
  *  the transform picker as continuous inputs. MouseWheel impulses are
@@ -90,6 +164,8 @@ export function getKnownChannels(
   model: AvatarModel,
   kind: BindingKind = "visibility",
 ): string[] {
+  const midi = dynamicMidiChannels();
+
   const builtins: string[] = [];
   if (kind === "visibility") {
     builtins.push("MicState", "MouthActive");
@@ -101,16 +177,52 @@ export function getKnownChannels(
       "KeyEvent",
       "KeyRegion",
       ...MOUSE_BOOLEAN_CHANNELS,
+      // Gamepad booleans (face/dpad/shoulders/etc) make sense as
+      // visibility gates — "show this sprite while holding A" is a
+      // common rig.
+      ...GAMEPAD_BOOLEAN_CHANNELS,
+      // MIDI booleans: MidiNoteOn (any-note held) and MidiNote{N}
+      // (specific notes the user has touched).
+      ...MIDI_BOOLEAN_BASE,
+      ...midi.boolean,
+      // Heart-rate: just the active gate — raw BPM as a visibility
+      // value would force the user to pick an exact number, which is
+      // never the intent. Use a transform binding to gate on ranges.
+      ...HEART_RATE_BOOLEAN,
+      // Twitch: discrete event channels are first-class visibility
+      // inputs. "Show on TwitchChatCommand=hype" maps !hype to a
+      // sprite. TwitchChatActive gates "show this overlay only when
+      // chat is connected".
+      ...TWITCH_DISCRETE,
+      ...TWITCH_BOOLEAN,
     );
   } else if (kind === "pose") {
     // Continuous numeric inputs only — pose progress is value-driven.
     // Booleans included because "MouseLeft → pose" (enter pose on click)
-    // is a useful pattern with a 0..1 range.
+    // is a useful pattern with a 0..1 range. Gamepad sticks/triggers
+    // are flagship pose inputs — analog sticks naturally map to
+    // continuous head sway / body lean. MIDI knobs / pitchbend /
+    // aftertouch slot in here as the "tactile-fader" version of the
+    // same idea.
     builtins.push(
       "MicVolume",
       ...WEBCAM_CHANNELS,
       ...MOUSE_CONTINUOUS_CHANNELS,
       ...MOUSE_BOOLEAN_CHANNELS,
+      ...GAMEPAD_CONTINUOUS_CHANNELS,
+      ...GAMEPAD_BOOLEAN_CHANNELS,
+      ...MIDI_CONTINUOUS_BASE,
+      ...midi.continuous,
+      ...MIDI_BOOLEAN_BASE,
+      ...midi.boolean,
+      // HeartRate is a flagship pose driver — "head pulse" rigs that
+      // animate scale or rotation in time with BPM are an obvious
+      // PNGTuberUltra-only feature.
+      ...HEART_RATE_CONTINUOUS,
+      ...HEART_RATE_BOOLEAN,
+      // TwitchBits is a perfect pose driver via Spring modifier —
+      // big cheers throw the avatar back, small cheers nudge it.
+      ...TWITCH_CONTINUOUS,
     );
   } else {
     // Continuous numeric channels (suit linear mappings).
@@ -118,12 +230,17 @@ export function getKnownChannels(
       "MicVolume",
       ...WEBCAM_CHANNELS,
       ...MOUSE_CONTINUOUS_CHANNELS,
+      ...GAMEPAD_CONTINUOUS_CHANNELS,
+      ...MIDI_CONTINUOUS_BASE,
+      ...midi.continuous,
+      ...HEART_RATE_CONTINUOUS,
+      ...TWITCH_CONTINUOUS,
     );
     // Discrete channels (suit stateMap mappings — phoneme/viseme/state/
     // region/key → number lookups). Lipsync is the recommended default
     // for sprite-sheet rigs because it combines audio + visual signals.
-    // Mouse buttons are booleans, useful in transform too (linear mapping
-    // 0..1 turns a click into a continuous output).
+    // Mouse + gamepad buttons are booleans, useful in transform too
+    // (linear mapping 0..1 turns a press into a continuous output).
     builtins.push("MicState", "MouthActive");
     if (isPhonemeChannelReachable(model)) builtins.push("MicPhoneme");
     if (isBlinkChannelReachable(model)) builtins.push("BlinkState");
@@ -133,6 +250,12 @@ export function getKnownChannels(
       "KeyEvent",
       "KeyRegion",
       ...MOUSE_BOOLEAN_CHANNELS,
+      ...GAMEPAD_BOOLEAN_CHANNELS,
+      ...MIDI_BOOLEAN_BASE,
+      ...midi.boolean,
+      ...HEART_RATE_BOOLEAN,
+      ...TWITCH_DISCRETE,
+      ...TWITCH_BOOLEAN,
     );
   }
 
@@ -187,6 +310,32 @@ export function getValuesForChannel(
     case "MouseRight":
     case "MouseMiddle":
     case "MouseInside":
+    // Gamepad booleans share the same true/false stringification path —
+    // every Gamepad* boolean channel resolves to one of these two
+    // values, so the dropdown offers the same pair without the user
+    // having to type either by hand.
+    case "GamepadA":
+    case "GamepadB":
+    case "GamepadX":
+    case "GamepadY":
+    case "GamepadLB":
+    case "GamepadRB":
+    case "GamepadBack":
+    case "GamepadStart":
+    case "GamepadHome":
+    case "GamepadLStick":
+    case "GamepadRStick":
+    case "GamepadDUp":
+    case "GamepadDDown":
+    case "GamepadDLeft":
+    case "GamepadDRight":
+    // MIDI boolean channels — MidiNoteOn (global any-note) and the
+    // dynamic per-note MidiNote{N} channels. The latter aren't
+    // listed exhaustively here because note numbers are open-ended;
+    // the default branch below catches them by name prefix.
+    case "MidiNoteOn":
+    case "HeartRateActive":
+    case "TwitchChatActive":
       // Booleans stringify to "true"/"false" through the visibility
       // condition evaluator; expose both so Show On / equals checks work
       // without the user having to remember the casing.
@@ -214,6 +363,17 @@ export function getValuesForChannel(
       return keys.size > 0 ? Array.from(keys).sort() : null;
     }
     default: {
+      // Dynamic MIDI per-note channels (MidiNote60, MidiNote72, etc.)
+      // are booleans like the explicit cases above. Match by prefix
+      // since note numbers are open-ended (0..127).
+      if (
+        channel.startsWith("MidiNote") &&
+        channel !== "MidiNoteOn" &&
+        channel !== "MidiNoteAny"
+      ) {
+        return ["true", "false"];
+      }
+
       // User-defined channel — look at hotkeys writing to it.
       const hotkeys = effectiveKeyboard(model).hotkeys.filter(
         (h) => h.channel.trim() === channel,

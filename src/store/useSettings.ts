@@ -104,6 +104,23 @@ interface SettingsState {
    *  macOS requires Accessibility permission. */
   globalMouseEnabled: boolean;
   setGlobalMouseEnabled: (enabled: boolean) => void;
+  /** Twitch channel name to read chat from. Empty string = not
+   *  configured. Stored separately from a "connected" flag so the
+   *  user's channel name persists across sessions but they still
+   *  explicitly opt back into a live socket each launch (avoids
+   *  surprise streamer-event firing on app boot — chat noise driving
+   *  the avatar before the user has seen the editor open is
+   *  disorienting). The TwitchChatSource itself owns the live socket
+   *  state via its own subscribeConnection(); we just persist the
+   *  identifier here. */
+  twitchChannel: string;
+  setTwitchChannel: (channel: string) => void;
+  /** When true, automatically connect to twitchChannel on app boot
+   *  (and on settings load). Off by default — see the rationale on
+   *  twitchChannel above. Power users who want it always-on can
+   *  flip this in the popover. */
+  twitchAutoConnect: boolean;
+  setTwitchAutoConnect: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -135,6 +152,11 @@ export const useSettings = create<SettingsState>()(
       globalMouseEnabled: false,
       setGlobalMouseEnabled: (enabled) =>
         set({ globalMouseEnabled: enabled }),
+      twitchChannel: "",
+      setTwitchChannel: (channel) => set({ twitchChannel: channel }),
+      twitchAutoConnect: false,
+      setTwitchAutoConnect: (enabled) =>
+        set({ twitchAutoConnect: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.
