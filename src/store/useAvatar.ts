@@ -69,6 +69,32 @@ interface AvatarStore {
   selectSprite: (id: SpriteId | null) => void;
   updateSpriteTransform: (id: SpriteId, patch: Partial<Transform>) => void;
   updateSpriteAnchor: (id: SpriteId, patch: Partial<Anchor>) => void;
+  /**
+   * Set the sprite's anchor while compensating its transform.x/y so
+   * the visible art stays in the same world position. Use this from
+   * UI surfaces that want anchor edits to behave as "move the
+   * pivot point in place" rather than "snap the sprite to a new
+   * position relative to the new anchor" — i.e. how artists
+   * naturally think about anchor adjustments.
+   *
+   * `frameSize` is the sprite's effective per-frame texture size in
+   * pixels (full asset size for non-sheet sprites; asset-w/cols ×
+   * asset-h/rows for sheets). Caller looks this up from the asset
+   * registry and passes in.
+   *
+   * Atomic — single history entry. Math:
+   *   delta_local = ((newAx - oldAx) * w * scaleX,
+   *                  (newAy - oldAy) * h * scaleY)
+   *   delta_world = R * delta_local            (rotation matrix)
+   *   transform' = transform + delta_world
+   *   anchor'    = newAnchor
+   * Holds for any sprite scale + rotation.
+   */
+  setSpriteAnchorPreservingArt: (
+    id: SpriteId,
+    newAnchor: Partial<Anchor>,
+    frameSize: { w: number; h: number },
+  ) => void;
   /** Set or clear a sprite's sprite-sheet config. Pass undefined to disable
    *  sheet animation; pass an object to enable / replace. */
   setSpriteSheet: (id: SpriteId, sheet: SpriteSheet | undefined) => void;
@@ -228,6 +254,44 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         sprites: state.model.sprites.map((s) =>
           s.id === id ? { ...s, anchor: { ...s.anchor, ...patch } } : s,
         ),
+      },
+    })),
+
+  setSpriteAnchorPreservingArt: (id, newAnchor, frameSize) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== id) return s;
+          const oldA = s.anchor;
+          const newA: Anchor = {
+            x: newAnchor.x ?? oldA.x,
+            y: newAnchor.y ?? oldA.y,
+          };
+          // Local-space delta from old anchor to new anchor, scaled
+          // into the sprite's transformed coords. (newAx - oldAx)*w
+          // is in unscaled local pixels; multiplying by scaleX puts
+          // it in scaled local pixels. The rotation matrix below
+          // pushes it into world coords.
+          const dxLocal =
+            (newA.x - oldA.x) * frameSize.w * s.transform.scaleX;
+          const dyLocal =
+            (newA.y - oldA.y) * frameSize.h * s.transform.scaleY;
+          const rotRad = (s.transform.rotation * Math.PI) / 180;
+          const cos = Math.cos(rotRad);
+          const sin = Math.sin(rotRad);
+          const dxWorld = dxLocal * cos - dyLocal * sin;
+          const dyWorld = dxLocal * sin + dyLocal * cos;
+          return {
+            ...s,
+            anchor: newA,
+            transform: {
+              ...s.transform,
+              x: s.transform.x + dxWorld,
+              y: s.transform.y + dyWorld,
+            },
+          };
+        }),
       },
     })),
 

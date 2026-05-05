@@ -132,6 +132,8 @@ function StreamingSection() {
   const setChromaKeyColor = useSettings((s) => s.setChromaKeyColor);
   const transparentWindow = useSettings((s) => s.transparentWindow);
   const setTransparentWindow = useSettings((s) => s.setTransparentWindow);
+  const previewChromaKey = useSettings((s) => s.previewChromaKey);
+  const setPreviewChromaKey = useSettings((s) => s.setPreviewChromaKey);
 
   return (
     <section className="settings-section">
@@ -184,7 +186,7 @@ function StreamingSection() {
 
       <label
         className="settings-color-row"
-        title="Color rendered behind the avatar canvas in stream mode (when Transparent is off). Set this to the green / magenta you want OBS Chroma Key to remove. Has no visible effect outside stream mode."
+        title="Color rendered behind the avatar canvas in stream mode (when Transparent is off). Set this to the green / magenta you want OBS Chroma Key to remove. Outside stream mode the editor uses a neutral dark background instead — see the Preview toggle below to view this color while editing."
       >
         <span className="settings-color-label">Chroma color</span>
         <input
@@ -206,6 +208,27 @@ function StreamingSection() {
           }}
           placeholder="#00ff00"
         />
+      </label>
+
+      <label
+        className={`settings-radio ${previewChromaKey ? "active" : ""}`}
+        title="Show the chroma color in the editor canvas without entering stream mode. Off by default — staring at solid green for hours while rigging is fatiguing. Flip on briefly to check that the avatar looks right against the keyed-out color."
+      >
+        <input
+          type="checkbox"
+          checked={previewChromaKey}
+          onChange={(e) => setPreviewChromaKey(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">
+            Preview chroma in editor
+          </div>
+          <div className="settings-radio-hint">
+            Editor canvas uses the chroma color instead of the
+            neutral dark background, so you can spot-check what'll
+            be keyed out. Independent from stream mode.
+          </div>
+        </div>
       </label>
 
       <GlobalKeyboardToggle />

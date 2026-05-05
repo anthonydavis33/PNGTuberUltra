@@ -1,6 +1,15 @@
-import { useMemo, useRef, useState } from "react";
-import { Plus, RotateCcw, ListChecks } from "lucide-react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Crosshair,
+  ListChecks,
+  Plus,
+  RotateCcw,
+} from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
+import { useEditor } from "../store/useEditor";
+import { PLACEHOLDER_TEX_H, PLACEHOLDER_TEX_W } from "../canvas/pixiApp";
 import { NumberField } from "../components/NumberField";
 import { BindingRow } from "../components/BindingRow";
 import {
@@ -13,6 +22,11 @@ import { AnimationRow } from "../components/AnimationRow";
 import { ShowOnPopover } from "./ShowOnPopover";
 import { getKnownChannels } from "../bindings/channels";
 import {
+  isPoseBinding,
+  isTransformBinding,
+  isVisibilityBinding,
+} from "../bindings/evaluate";
+import {
   DEFAULT_SPRITE_SHEET,
   DEFAULT_TRANSFORM,
   type Anchor,
@@ -20,6 +34,7 @@ import {
   type Modifier,
   type ModifierType,
   type PoseBinding,
+  type Sprite,
   type SpriteSheet,
   type SpriteSheetLoopMode,
   type Transform,
@@ -30,13 +45,67 @@ import {
 const newBindingId = (): string =>
   `b-${crypto.randomUUID().slice(0, 8)}`;
 
+/**
+ * Collapsible section wrapper. Header is the click target — the
+ * chevron rotates and the body shows/hides. Action buttons in the
+ * header are stop-propagation-wrapped so they don't trigger collapse.
+ *
+ * Collapsed state lives in useEditor and is shared across sprites:
+ * collapsing "Bindings" stays collapsed when you switch to a
+ * different sprite, matching what users want for muscle memory.
+ */
+function CollapsibleSection({
+  id,
+  title,
+  actions,
+  children,
+}: {
+  id: string;
+  title: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const collapsed = useEditor((s) =>
+    s.collapsedPropertiesSections.has(id),
+  );
+  const toggle = useEditor((s) => s.togglePropertiesSection);
+
+  return (
+    <section className={`properties-section ${collapsed ? "collapsed" : ""}`}>
+      <div
+        className="properties-section-header"
+        onClick={() => toggle(id)}
+        role="button"
+        aria-expanded={!collapsed}
+      >
+        <span className="properties-section-chevron" aria-hidden="true">
+          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+        </span>
+        <span className="properties-section-title">{title}</span>
+        {actions && (
+          <div
+            className="properties-section-actions"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {actions}
+          </div>
+        )}
+      </div>
+      {!collapsed && <div className="properties-section-body">{children}</div>}
+    </section>
+  );
+}
+
 export function Properties() {
   const selectedId = useAvatar((s) => s.selectedId);
   const sprite = useAvatar((s) =>
     s.model.sprites.find((sp) => sp.id === selectedId),
   );
+  const assets = useAvatar((s) => s.assets);
   const updateSpriteTransform = useAvatar((s) => s.updateSpriteTransform);
-  const updateSpriteAnchor = useAvatar((s) => s.updateSpriteAnchor);
+  const setSpriteAnchorPreservingArt = useAvatar(
+    (s) => s.setSpriteAnchorPreservingArt,
+  );
   const setSpriteSheet = useAvatar((s) => s.setSpriteSheet);
   const setSpriteClipBy = useAvatar((s) => s.setSpriteClipBy);
   const addBinding = useAvatar((s) => s.addBinding);
@@ -49,6 +118,10 @@ export function Properties() {
   const removeAnimation = useAvatar((s) => s.removeAnimation);
   const updateAnimation = useAvatar((s) => s.updateAnimation);
   const model = useAvatar((s) => s.model);
+
+  const pivotMoveMode = useEditor((s) => s.pivotMoveMode);
+  const setPivotMoveMode = useEditor((s) => s.setPivotMoveMode);
+
   const [pendingModifierType, setPendingModifierType] =
     useState<ModifierType>("spring");
   const [showOnOpen, setShowOnOpen] = useState(false);
@@ -85,10 +158,27 @@ export function Properties() {
     (v: number): void => {
       updateSpriteTransform(sprite.id, { [key]: v });
     };
+
+  // Compute the per-frame texture size for anchor compensation. Sheet
+  // sprites slice the asset into cells — anchor lives in cell-local
+  // coords there, so divide accordingly.
+  const frameSize = computeFrameSize(sprite, assets);
+
+  // Pre-bucket bindings by type so each Bindings sub-section
+  // (Visibility / Transforms / Pose) renders only its own kind.
+  // `target === "visible"` is visibility; `"pose"` is pose; the
+  // rest (x/y/rotation/scaleX/scaleY/alpha/frame) are single-
+  // property transforms.
+  const visibilityBindings = sprite.bindings.filter(isVisibilityBinding);
+  const poseBindings = sprite.bindings.filter(isPoseBinding);
+  const transformBindings = sprite.bindings.filter(isTransformBinding);
+
   const setAnchor =
     (key: keyof Anchor) =>
     (v: number): void => {
-      updateSpriteAnchor(sprite.id, { [key]: v });
+      // Use the art-preserving action so changing the anchor moves
+      // the pivot point without yanking the visible art around.
+      setSpriteAnchorPreservingArt(sprite.id, { [key]: v }, frameSize);
     };
 
   const resetTransform = () => {
@@ -111,15 +201,6 @@ export function Properties() {
   };
 
   const addNewTransformBinding = (): void => {
-    // Smart defaults based on the sprite's nature:
-    //   - Sheet sprites: default to `Lipsync → frame` stateMap. Lipsync
-    //     combines audio phonemes (fast vowel transitions during voiced
-    //     speech) with webcam visemes (FV / MBP visual-only shapes) into
-    //     a single best-effort channel — the right default whether the
-    //     user's running mic-only, webcam-only, or both. Auto-populated
-    //     entries are AI/EE/O/U/MBP/FV → 0..5.
-    //   - Non-sheet sprites: classic mic-volume-driven mouth-flap (scaleY
-    //     1.0–1.2) — the prior phase-3b default.
     let binding: TransformBinding;
     if (sprite.sheet) {
       const channel = "Lipsync";
@@ -147,12 +228,12 @@ export function Properties() {
   };
 
   const addNewPoseBinding = (): void => {
-    // Default pose: HeadPitch driving a small head-tilt-forward gesture.
-    // Pre-populated with reasonable values so the user sees an effect
-    // immediately (small Y-shift down + slight rotation forward + tiny
-    // ScaleY squish) and can either tune from there or wholesale
-    // replace once they understand the shape. inMin=0/inMax=20 maps a
-    // typical head pitch range (degrees) to pose progress.
+    // Fresh pose binding starts with NO targets checked — the user
+    // picks which axes to drive by checking them or typing values
+    // (typing auto-enables). Earlier defaults pre-populated y +
+    // rotation + scaleY for a "head tilt forward" demo, but most
+    // rigs don't want those exact values; pristine empty pose is a
+    // cleaner blank slate.
     const binding: PoseBinding = {
       id: newBindingId(),
       target: "pose",
@@ -160,18 +241,13 @@ export function Properties() {
       inMin: 0,
       inMax: 20,
       clamped: true,
-      pose: { y: 4, rotation: 4, scaleY: -0.04 },
+      pose: {},
     };
     addBinding(sprite.id, binding);
   };
 
   const addNewAnimation = (): void => {
     const id = `a-${crypto.randomUUID().slice(0, 8)}`;
-    // Sensible default: a one-shot rotation wave triggered by Mouse Left.
-    // The user almost certainly wants to change BOTH the trigger and the
-    // body, but starting with a complete, working animation is much less
-    // intimidating than starting with empty fields. They tweak from
-    // there.
     const animation: Animation = {
       id,
       name: "Wave",
@@ -221,8 +297,23 @@ export function Properties() {
     <aside className="panel properties">
       <h2>Properties</h2>
       <h3>{sprite.name}</h3>
-      <div className="prop-grid">
-        <div className="prop-pair">
+
+      <CollapsibleSection
+        id="transform"
+        title="Transform"
+        actions={
+          <button
+            className="tool-btn"
+            onClick={resetTransform}
+            title="Reset x/y/rotation to 0, scale to 1"
+            aria-label="Reset transform"
+          >
+            <RotateCcw size={12} />
+            Reset
+          </button>
+        }
+      >
+        <div className="prop-grid prop-grid-stacked">
           <NumberField
             label="X"
             value={t.x}
@@ -237,15 +328,13 @@ export function Properties() {
             step={1}
             precision={0}
           />
-        </div>
-        <NumberField
-          label="Rotation"
-          value={t.rotation}
-          onChange={setTransform("rotation")}
-          step={0.5}
-          precision={1}
-        />
-        <div className="prop-pair">
+          <NumberField
+            label="Rotation"
+            value={t.rotation}
+            onChange={setTransform("rotation")}
+            step={0.5}
+            precision={1}
+          />
           <NumberField
             label="Scale X"
             value={t.scaleX}
@@ -261,7 +350,28 @@ export function Properties() {
             precision={2}
           />
         </div>
-        <div className="prop-pair">
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="anchor"
+        title="Anchor"
+        actions={
+          <button
+            className={`tool-btn ${pivotMoveMode ? "active" : ""}`}
+            onClick={() => setPivotMoveMode(!pivotMoveMode)}
+            title={
+              pivotMoveMode
+                ? "Click off to exit pivot move mode."
+                : "Move pivot mode — click on the canvas to set the anchor at that point. Other sprites are temporarily hidden so you can see this one clearly. The art stays in place; only the pivot moves."
+            }
+            aria-pressed={pivotMoveMode}
+          >
+            <Crosshair size={12} />
+            {pivotMoveMode ? "Stop" : "Move pivot"}
+          </button>
+        }
+      >
+        <div className="prop-grid prop-grid-stacked">
           <NumberField
             label="Anchor X"
             value={sprite.anchor.x}
@@ -276,22 +386,19 @@ export function Properties() {
             step={0.05}
             precision={2}
           />
+          <p className="properties-section-hint">
+            0,0 = top-left of the art · 0.5,0.5 = center · 1,1 =
+            bottom-right. Editing these moves the pivot point only —
+            the visible art stays put.
+          </p>
         </div>
-      </div>
-      <button
-        className="tool-btn reset-transform"
-        onClick={resetTransform}
-        title="Reset transform: x/y/rotation to 0, scale to 1"
-      >
-        <RotateCcw size={14} />
-        Reset Transform
-      </button>
+      </CollapsibleSection>
 
-      {/* ============= SPRITE SHEET ============= */}
-      <section className="properties-section">
-        <div className="properties-section-header">
-          <span>Sprite Sheet</span>
-          {sprite.sheet ? (
+      <CollapsibleSection
+        id="sprite-sheet"
+        title="Sprite Sheet"
+        actions={
+          sprite.sheet ? (
             <button
               onClick={() => setSpriteSheet(sprite.id, undefined)}
               className="tool-btn"
@@ -308,55 +415,51 @@ export function Properties() {
               <Plus size={12} />
               Configure
             </button>
-          )}
-        </div>
-
+          )
+        }
+      >
         {sprite.sheet ? (
-          <div className="sprite-sheet-fields">
-            <div className="prop-pair">
-              <NumberField
-                label="Cols"
-                value={sprite.sheet.cols}
-                onChange={(v) =>
-                  updateSheetField({ cols: Math.max(1, Math.floor(v)) })
-                }
-                step={1}
-                precision={0}
-              />
-              <NumberField
-                label="Rows"
-                value={sprite.sheet.rows}
-                onChange={(v) =>
-                  updateSheetField({ rows: Math.max(1, Math.floor(v)) })
-                }
-                step={1}
-                precision={0}
-              />
-            </div>
-            <div className="prop-pair">
-              <NumberField
-                label="Frames"
-                value={sprite.sheet.frameCount}
-                onChange={(v) =>
-                  updateSheetField({
-                    frameCount: Math.max(1, Math.floor(v)),
-                  })
-                }
-                step={1}
-                precision={0}
-              />
-              <NumberField
-                label="FPS"
-                value={sprite.sheet.fps}
-                onChange={(v) => updateSheetField({ fps: Math.max(0, v) })}
-                step={1}
-                precision={1}
-              />
-            </div>
-            <label className="sprite-sheet-loop-label">
-              <span>Loop mode</span>
+          <div className="prop-grid prop-grid-stacked">
+            <NumberField
+              label="Cols"
+              value={sprite.sheet.cols}
+              onChange={(v) =>
+                updateSheetField({ cols: Math.max(1, Math.floor(v)) })
+              }
+              step={1}
+              precision={0}
+            />
+            <NumberField
+              label="Rows"
+              value={sprite.sheet.rows}
+              onChange={(v) =>
+                updateSheetField({ rows: Math.max(1, Math.floor(v)) })
+              }
+              step={1}
+              precision={0}
+            />
+            <NumberField
+              label="Frames"
+              value={sprite.sheet.frameCount}
+              onChange={(v) =>
+                updateSheetField({
+                  frameCount: Math.max(1, Math.floor(v)),
+                })
+              }
+              step={1}
+              precision={0}
+            />
+            <NumberField
+              label="FPS"
+              value={sprite.sheet.fps}
+              onChange={(v) => updateSheetField({ fps: Math.max(0, v) })}
+              step={1}
+              precision={1}
+            />
+            <label className="prop-row">
+              <span className="prop-row-label">Loop mode</span>
               <select
-                className="sprite-sheet-loop"
+                className="sprite-sheet-loop prop-row-control"
                 value={sprite.sheet.loopMode}
                 onChange={(e) =>
                   updateSheetField({
@@ -377,13 +480,9 @@ export function Properties() {
             to slice it into animation frames.
           </p>
         )}
-      </section>
+      </CollapsibleSection>
 
-      {/* ============= CLIPPING ============= */}
-      <section className="properties-section">
-        <div className="properties-section-header">
-          <span>Clipping</span>
-        </div>
+      <CollapsibleSection id="clipping" title="Clipping">
         <div className="clipping-row">
           <span className="clipping-label">Show only inside</span>
           <select
@@ -413,39 +512,76 @@ export function Properties() {
               Mask sprite no longer exists — clipping is currently a no-op.
             </p>
           )}
-      </section>
+      </CollapsibleSection>
 
-      {/* ============= BINDINGS ============= */}
-      <section className="properties-section">
-        <div className="properties-section-header">
-          <span>Bindings</span>
-          <div className="properties-section-actions">
-            <button
-              ref={showOnButtonRef}
-              onClick={() => setShowOnOpen((v) => !v)}
-              className={`tool-btn show-on-button ${
-                showOnOpen ? "active" : ""
-              }`}
-              title="Recommended: pick states / phonemes / hotkeys the sprite shows on with checkboxes"
-            >
-              <ListChecks size={12} />
-              Show On
-            </button>
-            {showOnOpen && (
-              <ShowOnPopover
-                spriteId={sprite.id}
-                onClose={() => setShowOnOpen(false)}
-                anchorRef={showOnButtonRef}
-              />
-            )}
-            <button
-              onClick={addNewVisibilityBinding}
-              className="tool-btn"
-              title="Advanced — add a manual visibility binding (channel / op / value)"
-            >
-              <Plus size={12} />
-              Visibility
-            </button>
+      <CollapsibleSection id="bindings" title="Bindings">
+        {/* Visibility — show / hide bindings + the Show On picker.
+         *  Show On is the recommended entry point; the manual
+         *  "+ Visibility" button is for advanced users who want a
+         *  specific channel/op combination. */}
+        <CollapsibleSection
+          id="bindings-visibility"
+          title="Visibility"
+          actions={
+            <>
+              <button
+                ref={showOnButtonRef}
+                onClick={() => setShowOnOpen((v) => !v)}
+                className={`tool-btn show-on-button ${
+                  showOnOpen ? "active" : ""
+                }`}
+                title="Recommended: pick states / phonemes / hotkeys the sprite shows on with checkboxes"
+              >
+                <ListChecks size={12} />
+                Show On
+              </button>
+              {showOnOpen && (
+                <ShowOnPopover
+                  spriteId={sprite.id}
+                  onClose={() => setShowOnOpen(false)}
+                  anchorRef={showOnButtonRef}
+                />
+              )}
+              <button
+                onClick={addNewVisibilityBinding}
+                className="tool-btn"
+                title="Advanced — add a manual visibility binding (channel / op / value)"
+              >
+                <Plus size={12} />
+                Add
+              </button>
+            </>
+          }
+        >
+          {visibilityBindings.length === 0 ? (
+            <p className="empty">
+              No visibility bindings — sprite always visible. Use{" "}
+              <strong>Show On</strong> to react to mic state, hotkeys, or
+              key regions.
+            </p>
+          ) : (
+            <ul className="binding-list">
+              {visibilityBindings.map((b) => (
+                <BindingRow
+                  key={b.id}
+                  binding={b}
+                  channels={visibilityChannels}
+                  model={model}
+                  onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
+                  onRemove={() => removeBinding(sprite.id, b.id)}
+                />
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
+
+        {/* Transforms — single-property numeric drivers (X / Y /
+         *  Rotation / Scale / Alpha / Frame). Linear or stateMap
+         *  mappings. */}
+        <CollapsibleSection
+          id="bindings-transforms"
+          title="Transforms"
+          actions={
             <button
               onClick={addNewTransformBinding}
               className="tool-btn"
@@ -456,58 +592,18 @@ export function Properties() {
               }
             >
               <Plus size={12} />
-              Transform
+              Add
             </button>
-            <button
-              onClick={addNewPoseBinding}
-              className="tool-btn"
-              title="Drive multiple transform properties at once from one channel — channel value lerps progress between rest and a target pose. Replaces the typical 'three coordinated bindings' rig (rotation + Y-shift + ScaleY for a head-lean, etc.) with a single binding."
-            >
-              <Plus size={12} />
-              Pose
-            </button>
-          </div>
-        </div>
-
-        {sprite.bindings.length === 0 ? (
-          <p className="empty">
-            No bindings — sprite always visible at its base transform. Use{" "}
-            <strong>Show On</strong> to make it react to mic state, hotkeys,
-            or key regions.
-          </p>
-        ) : (
-          <ul className="binding-list">
-            {sprite.bindings.map((b) => {
-              if (b.target === "visible") {
-                return (
-                  <BindingRow
-                    key={b.id}
-                    binding={b}
-                    channels={visibilityChannels}
-                    model={model}
-                    onChange={(patch) =>
-                      updateBinding(sprite.id, b.id, patch)
-                    }
-                    onRemove={() => removeBinding(sprite.id, b.id)}
-                  />
-                );
-              }
-              if (b.target === "pose") {
-                return (
-                  <PoseBindingRow
-                    key={b.id}
-                    binding={b}
-                    channels={poseChannels}
-                    model={model}
-                    spriteId={sprite.id}
-                    onChange={(patch) =>
-                      updateBinding(sprite.id, b.id, patch)
-                    }
-                    onRemove={() => removeBinding(sprite.id, b.id)}
-                  />
-                );
-              }
-              return (
+          }
+        >
+          {transformBindings.length === 0 ? (
+            <p className="empty">
+              No transform bindings. Add one to drive X / Y / rotation /
+              scale / alpha / frame from a numeric channel.
+            </p>
+          ) : (
+            <ul className="binding-list">
+              {transformBindings.map((b) => (
                 <TransformBindingRow
                   key={b.id}
                   binding={b}
@@ -516,17 +612,58 @@ export function Properties() {
                   onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
                   onRemove={() => removeBinding(sprite.id, b.id)}
                 />
-              );
-            })}
-          </ul>
-        )}
-      </section>
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
 
-      {/* ============= MODIFIERS ============= */}
-      <section className="properties-section">
-        <div className="properties-section-header">
-          <span>Modifiers</span>
-          <div className="properties-section-actions">
+        {/* Pose — multi-property bindings: one channel value lerps
+         *  progress between rest and a configured peak pose
+         *  (translation + rotation + scale + corner mesh deformation
+         *  in any combination). */}
+        <CollapsibleSection
+          id="bindings-pose"
+          title="Pose"
+          actions={
+            <button
+              onClick={addNewPoseBinding}
+              className="tool-btn"
+              title="Drive multiple transform properties at once from one channel — channel value lerps progress between rest and a target pose. Replaces the typical 'three coordinated bindings' rig (rotation + Y-shift + ScaleY for a head-lean, etc.) with a single binding."
+            >
+              <Plus size={12} />
+              Add
+            </button>
+          }
+        >
+          {poseBindings.length === 0 ? (
+            <p className="empty">
+              No pose bindings. Add one to drive a coordinated multi-
+              property pose (rotate + shift + scale + corner mesh) from
+              a single channel.
+            </p>
+          ) : (
+            <ul className="binding-list">
+              {poseBindings.map((b) => (
+                <PoseBindingRow
+                  key={b.id}
+                  binding={b}
+                  channels={poseChannels}
+                  model={model}
+                  spriteId={sprite.id}
+                  onChange={(patch) => updateBinding(sprite.id, b.id, patch)}
+                  onRemove={() => removeBinding(sprite.id, b.id)}
+                />
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="modifiers"
+        title="Modifiers"
+        actions={
+          <>
             <select
               className="modifier-type-picker"
               value={pendingModifierType}
@@ -548,9 +685,9 @@ export function Properties() {
               <Plus size={12} />
               Add
             </button>
-          </div>
-        </div>
-
+          </>
+        }
+      >
         {sprite.modifiers.length === 0 ? (
           <p className="empty">No modifiers — base + bindings only.</p>
         ) : (
@@ -567,24 +704,22 @@ export function Properties() {
             ))}
           </ul>
         )}
-      </section>
+      </CollapsibleSection>
 
-      {/* ============= ANIMATIONS ============= */}
-      <section className="properties-section">
-        <div className="properties-section-header">
-          <span>Animations</span>
-          <div className="properties-section-actions">
-            <button
-              onClick={addNewAnimation}
-              className="tool-btn"
-              title="Event-triggered tween or sprite-sheet playback. Defaults to a one-shot rotation wave on Mouse Left — change trigger / body / mode after."
-            >
-              <Plus size={12} />
-              Add
-            </button>
-          </div>
-        </div>
-
+      <CollapsibleSection
+        id="animations"
+        title="Animations"
+        actions={
+          <button
+            onClick={addNewAnimation}
+            className="tool-btn"
+            title="Event-triggered tween or sprite-sheet playback. Defaults to a one-shot rotation wave on Mouse Left — change trigger / body / mode after."
+          >
+            <Plus size={12} />
+            Add
+          </button>
+        }
+      >
         {!sprite.animations || sprite.animations.length === 0 ? (
           <p className="empty">
             No animations. Bindings cover continuous response; add an
@@ -607,7 +742,44 @@ export function Properties() {
             ))}
           </ul>
         )}
-      </section>
+      </CollapsibleSection>
     </aside>
   );
+}
+
+/** Placeholder fallback. Pulled from the exported constants in
+ *  pixiApp so the value is locked to the actual rendered texture
+ *  size — drift here would cause sub-pixel art shimmering during
+ *  anchor edits on asset-less sprites. */
+const PLACEHOLDER_FRAME_SIZE = {
+  w: PLACEHOLDER_TEX_W,
+  h: PLACEHOLDER_TEX_H,
+};
+
+/** Compute the per-frame texture size used for anchor-compensation
+ *  math. Sheet sprites slice the asset; non-sheet sprites use the
+ *  full asset. Asset-less sprites fall back to the placeholder rect
+ *  size so anchor changes still produce visible movement.
+ *
+ *  Sheet division uses `Math.floor` to match sliceSheet — Pixi's
+ *  per-frame texture takes integer dimensions, and using the raw
+ *  (potentially fractional) division would skew the anchor math
+ *  by sub-pixel amounts, surfacing as visible drift while pivoting. */
+function computeFrameSize(
+  sprite: Sprite,
+  assets: Record<string, { width: number; height: number }>,
+): { w: number; h: number } {
+  if (!sprite.asset) return PLACEHOLDER_FRAME_SIZE;
+  const asset = assets[sprite.asset];
+  if (!asset || asset.width === 0 || asset.height === 0)
+    return PLACEHOLDER_FRAME_SIZE;
+  if (sprite.sheet) {
+    const cols = Math.max(1, sprite.sheet.cols);
+    const rows = Math.max(1, sprite.sheet.rows);
+    return {
+      w: Math.floor(asset.width / cols),
+      h: Math.floor(asset.height / rows),
+    };
+  }
+  return { w: asset.width, h: asset.height };
 }

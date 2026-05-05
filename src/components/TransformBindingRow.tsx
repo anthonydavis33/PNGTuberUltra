@@ -11,8 +11,15 @@
 // typing partial values like "-" or "" works while editing.
 
 import { useMemo } from "react";
-import { ArrowRight, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { NumberField } from "./NumberField";
+import { useEditor } from "../store/useEditor";
 import {
   type AvatarModel,
   type BindingMapping,
@@ -23,14 +30,24 @@ import {
 } from "../types/avatar";
 import { getValuesForChannel } from "../bindings/channels";
 
-const TRANSFORM_TARGETS: { value: TransformTarget; label: string }[] = [
-  { value: "x", label: "X" },
-  { value: "y", label: "Y" },
-  { value: "rotation", label: "Rotation" },
-  { value: "scaleX", label: "Scale X" },
-  { value: "scaleY", label: "Scale Y" },
-  { value: "alpha", label: "Alpha" },
-  { value: "frame", label: "Frame" },
+// Abbreviated labels — the target picker shares horizontal space with
+// the channel select + chevron + trash inside a tight binding row, so
+// full words ("Rotation", "Scale X") get cut off. Pattern: T = Translate,
+// SC = Scale; Rot/Alp/Frm are short 3-letter abbreviations. The full
+// names still appear as `title` tooltips on each option for users
+// hovering to disambiguate.
+const TRANSFORM_TARGETS: {
+  value: TransformTarget;
+  label: string;
+  title: string;
+}[] = [
+  { value: "x", label: "TX", title: "Translate X (horizontal position offset)" },
+  { value: "y", label: "TY", title: "Translate Y (vertical position offset)" },
+  { value: "rotation", label: "Rot", title: "Rotation (degrees)" },
+  { value: "scaleX", label: "SC X", title: "Scale X (horizontal stretch)" },
+  { value: "scaleY", label: "SC Y", title: "Scale Y (vertical stretch)" },
+  { value: "alpha", label: "Alp", title: "Alpha (opacity)" },
+  { value: "frame", label: "Frm", title: "Frame (sprite-sheet frame index)" },
 ];
 
 interface TransformBindingRowProps {
@@ -82,6 +99,9 @@ export function TransformBindingRow({
   channels,
   model,
 }: TransformBindingRowProps) {
+  const collapsed = useEditor((s) => s.collapsedBindings.has(binding.id));
+  const toggleCollapsed = useEditor((s) => s.toggleBindingCollapsed);
+
   const channelOptions = useMemo(() => {
     const arr = [...channels];
     if (binding.input && !arr.includes(binding.input)) arr.unshift(binding.input);
@@ -129,8 +149,24 @@ export function TransformBindingRow({
   );
 
   return (
-    <li className="transform-binding-row">
+    <li
+      className={`transform-binding-row ${collapsed ? "collapsed" : ""}`}
+    >
       <div className="transform-binding-row-top">
+        <button
+          type="button"
+          className="binding-row-chevron"
+          onClick={() => toggleCollapsed(binding.id)}
+          title={
+            collapsed
+              ? "Expand binding to edit mapping"
+              : "Collapse to just the channel → target line"
+          }
+          aria-label="Toggle binding details"
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+        </button>
         <select
           className="binding-channel"
           value={binding.input}
@@ -155,7 +191,7 @@ export function TransformBindingRow({
           title="Sprite property to drive. `frame` only does anything for sprite-sheet sprites."
         >
           {TRANSFORM_TARGETS.map((t) => (
-            <option key={t.value} value={t.value}>
+            <option key={t.value} value={t.value} title={t.title}>
               {t.label}
             </option>
           ))}
@@ -170,65 +206,71 @@ export function TransformBindingRow({
         </button>
       </div>
 
-      <div className="mapping-kind-toggle">
-        <button
-          type="button"
-          className={binding.mapping.type === "linear" ? "active" : ""}
-          onClick={switchToLinear}
-          title="Range → range mapping. For continuous channels like MicVolume."
-        >
-          Linear
-        </button>
-        <button
-          type="button"
-          className={binding.mapping.type === "stateMap" ? "active" : ""}
-          onClick={switchToStateMap}
-          title="Discrete value → number lookup. For phoneme/state channels."
-        >
-          State Map
-        </button>
-      </div>
-
-      {binding.mapping.type === "linear" ? (
+      {!collapsed && (
         <>
-          <div className="mapping-row">
-            <span className="mapping-label">in</span>
-            {numberInput(binding.mapping.inMin, (v) =>
-              updateLinear({ inMin: v }),
-            )}
-            <span className="mapping-dash">–</span>
-            {numberInput(binding.mapping.inMax, (v) =>
-              updateLinear({ inMax: v }),
-            )}
+          <div className="mapping-kind-toggle">
+            <button
+              type="button"
+              className={binding.mapping.type === "linear" ? "active" : ""}
+              onClick={switchToLinear}
+              title="Range → range mapping. For continuous channels like MicVolume."
+            >
+              Linear
+            </button>
+            <button
+              type="button"
+              className={binding.mapping.type === "stateMap" ? "active" : ""}
+              onClick={switchToStateMap}
+              title="Discrete value → number lookup. For phoneme/state channels."
+            >
+              State Map
+            </button>
           </div>
-          <div className="mapping-row">
-            <span className="mapping-label">out</span>
-            {numberInput(binding.mapping.outMin, (v) =>
-              updateLinear({ outMin: v }),
-            )}
-            <span className="mapping-dash">–</span>
-            {numberInput(binding.mapping.outMax, (v) =>
-              updateLinear({ outMax: v }),
-            )}
-          </div>
-          <label
-            className="transform-binding-additive"
-            title="When checked, the output is added to the sprite's base value (gaze offsets the sprite around its base position). When unchecked, output replaces the base."
-          >
-            <input
-              type="checkbox"
-              checked={binding.mapping.additive ?? true}
-              onChange={(e) => updateLinear({ additive: e.target.checked })}
+
+          {binding.mapping.type === "linear" ? (
+            <>
+              <div className="mapping-row">
+                <span className="mapping-label">in</span>
+                {numberInput(binding.mapping.inMin, (v) =>
+                  updateLinear({ inMin: v }),
+                )}
+                <span className="mapping-dash">–</span>
+                {numberInput(binding.mapping.inMax, (v) =>
+                  updateLinear({ inMax: v }),
+                )}
+              </div>
+              <div className="mapping-row">
+                <span className="mapping-label">out</span>
+                {numberInput(binding.mapping.outMin, (v) =>
+                  updateLinear({ outMin: v }),
+                )}
+                <span className="mapping-dash">–</span>
+                {numberInput(binding.mapping.outMax, (v) =>
+                  updateLinear({ outMax: v }),
+                )}
+              </div>
+              <label
+                className="transform-binding-additive"
+                title="When checked, the output is added to the sprite's base value (gaze offsets the sprite around its base position). When unchecked, output replaces the base."
+              >
+                <input
+                  type="checkbox"
+                  checked={binding.mapping.additive ?? true}
+                  onChange={(e) =>
+                    updateLinear({ additive: e.target.checked })
+                  }
+                />
+                <span>Additive (offset from base)</span>
+              </label>
+            </>
+          ) : (
+            <StateMapEditor
+              mapping={binding.mapping}
+              onChange={updateStateMapEntries}
+              numberInput={numberInput}
             />
-            <span>Additive (offset from base)</span>
-          </label>
+          )}
         </>
-      ) : (
-        <StateMapEditor
-          mapping={binding.mapping}
-          onChange={updateStateMapEntries}
-          numberInput={numberInput}
-        />
       )}
     </li>
   );

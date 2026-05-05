@@ -48,6 +48,49 @@ interface EditorState {
    *  remove path so a deleted binding doesn't leave its mute
    *  hanging in the runtime force set. */
   unmutePoseBinding: (bindingId: string) => void;
+
+  /**
+   * When true, the next click on the canvas inside the selected
+   * sprite sets that sprite's anchor to the click point, with the
+   * art compensated to stay where it was visually. The runtime
+   * also dims/hides every other sprite while this is active so the
+   * user can see the art clearly.
+   *
+   * Toggled via the "Move pivot" button in the Properties panel.
+   * Stays on for multiple clicks until the user toggles it off
+   * (matches the "rigging tool stays in mode" expectation Photoshop /
+   * Live2D users carry over).
+   */
+  pivotMoveMode: boolean;
+  setPivotMoveMode: (active: boolean) => void;
+
+  /**
+   * Set of Properties-panel section ids the user has collapsed.
+   * Session-only — collapsing isn't a model property. Each section
+   * is keyed by a stable string ("transform", "anchor", "bindings",
+   * etc.); presence in the set means collapsed.
+   */
+  collapsedPropertiesSections: ReadonlySet<string>;
+  togglePropertiesSection: (id: string) => void;
+
+  /**
+   * Set of binding ids that are currently collapsed in their row's
+   * UI (just the top "channel → target" line is shown; mapping
+   * editor is hidden). Lets users tuck away completed bindings
+   * without deleting them, keeping the panel scannable when a
+   * sprite has many. Session-only.
+   */
+  collapsedBindings: ReadonlySet<string>;
+  toggleBindingCollapsed: (bindingId: string) => void;
+
+  /**
+   * Same idea as collapsedBindings but for animation ids — each
+   * animation row in the Properties panel can collapse to just its
+   * name + trash, so completed animations don't dominate the panel.
+   * Session-only.
+   */
+  collapsedAnimations: ReadonlySet<string>;
+  toggleAnimationCollapsed: (animationId: string) => void;
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
@@ -80,5 +123,44 @@ export const useEditor = create<EditorState>((set, get) => ({
       const next = new Set(state.mutedPoseBindings);
       next.delete(bindingId);
       return { mutedPoseBindings: next };
+    }),
+
+  pivotMoveMode: false,
+  setPivotMoveMode: (active) => set({ pivotMoveMode: active }),
+
+  collapsedPropertiesSections: new Set<string>(),
+  togglePropertiesSection: (id) =>
+    set((state) => {
+      const next = new Set(state.collapsedPropertiesSections);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return { collapsedPropertiesSections: next };
+    }),
+
+  collapsedBindings: new Set<string>(),
+  toggleBindingCollapsed: (bindingId) =>
+    set((state) => {
+      const next = new Set(state.collapsedBindings);
+      if (next.has(bindingId)) {
+        next.delete(bindingId);
+      } else {
+        next.add(bindingId);
+      }
+      return { collapsedBindings: next };
+    }),
+
+  collapsedAnimations: new Set<string>(),
+  toggleAnimationCollapsed: (animationId) =>
+    set((state) => {
+      const next = new Set(state.collapsedAnimations);
+      if (next.has(animationId)) {
+        next.delete(animationId);
+      } else {
+        next.add(animationId);
+      }
+      return { collapsedAnimations: next };
     }),
 }));

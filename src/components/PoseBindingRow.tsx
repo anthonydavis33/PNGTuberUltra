@@ -15,7 +15,14 @@
 // editing, same shape as the AnimationRow's tween-target editor.
 
 import { useMemo, useState } from "react";
-import { Crosshair, Eye, EyeOff, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Crosshair,
+  Eye,
+  EyeOff,
+  Trash2,
+} from "lucide-react";
 import { NumberField } from "./NumberField";
 import {
   type AvatarModel,
@@ -28,13 +35,21 @@ import { useEditor } from "../store/useEditor";
  *  bodies — alpha is excluded because alpha-as-pose is rarely useful
  *  (the existing visibility binding handles show/hide better), and
  *  frame is excluded because pose lerps continuously and frame is
- *  discrete. Use a transform binding with stateMap for those. */
-const POSE_PROPERTIES: { key: keyof Transform; label: string; step: number }[] = [
-  { key: "x", label: "X", step: 1 },
-  { key: "y", label: "Y", step: 1 },
-  { key: "rotation", label: "Rot", step: 0.5 },
-  { key: "scaleX", label: "ScX", step: 0.05 },
-  { key: "scaleY", label: "ScY", step: 0.05 },
+ *  discrete. Use a transform binding with stateMap for those.
+ *
+ *  Full-word labels (matching the Transform section's column) so the
+ *  pose targets read consistently. */
+const POSE_PROPERTIES: {
+  key: keyof Transform;
+  label: string;
+  step: number;
+  precision: number;
+}[] = [
+  { key: "x", label: "X", step: 1, precision: 0 },
+  { key: "y", label: "Y", step: 1, precision: 0 },
+  { key: "rotation", label: "Rotation", step: 0.5, precision: 1 },
+  { key: "scaleX", label: "Scale X", step: 0.01, precision: 2 },
+  { key: "scaleY", label: "Scale Y", step: 0.01, precision: 2 },
 ];
 
 interface PoseBindingRowProps {
@@ -60,6 +75,8 @@ export function PoseBindingRow({
   const mutedPoseBindings = useEditor((s) => s.mutedPoseBindings);
   const toggleMutePoseBinding = useEditor((s) => s.toggleMutePoseBinding);
   const unmutePoseBinding = useEditor((s) => s.unmutePoseBinding);
+  const collapsed = useEditor((s) => s.collapsedBindings.has(binding.id));
+  const toggleCollapsed = useEditor((s) => s.toggleBindingCollapsed);
   const isActiveOnCanvas =
     activePoseBinding?.spriteId === spriteId &&
     activePoseBinding?.bindingId === binding.id;
@@ -94,8 +111,22 @@ export function PoseBindingRow({
   const isClamped = binding.clamped !== false;
 
   return (
-    <li className="pose-binding-row">
+    <li className={`pose-binding-row ${collapsed ? "collapsed" : ""}`}>
       <div className="pose-binding-row-top">
+        <button
+          type="button"
+          className="binding-row-chevron"
+          onClick={() => toggleCollapsed(binding.id)}
+          title={
+            collapsed
+              ? "Expand binding to edit pose"
+              : "Collapse to just the channel → pose line"
+          }
+          aria-label="Toggle pose binding details"
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+        </button>
         <select
           className="binding-channel"
           value={binding.input}
@@ -108,9 +139,6 @@ export function PoseBindingRow({
             </option>
           ))}
         </select>
-        <span className="pose-binding-arrow" aria-hidden="true">
-          → pose
-        </span>
         <button
           className={`pose-binding-canvas-edit ${isMuted ? "muted" : ""}`}
           onClick={() => toggleMutePoseBinding(binding.id)}
@@ -156,126 +184,202 @@ export function PoseBindingRow({
         </button>
       </div>
 
-      <div className="mapping-row">
-        <span className="mapping-label">in</span>
-        <NumberField
-          label=""
-          value={binding.inMin}
-          onChange={(v) => onChange({ inMin: v })}
-          step={0.05}
-          precision={2}
-        />
-        <span className="mapping-dash">–</span>
-        <NumberField
-          label=""
-          value={binding.inMax}
-          onChange={(v) => onChange({ inMax: v })}
-          step={0.05}
-          precision={2}
-        />
-        <label
-          className="pose-binding-clamp"
-          title="Clamp progress to [0, 1]. Uncheck to let extreme channel values overshoot the pose — useful for 'extra-expressive' rigs."
-        >
-          <input
-            type="checkbox"
-            checked={isClamped}
-            onChange={(e) => onChange({ clamped: e.target.checked })}
-          />
-          <span>Clamp</span>
-        </label>
-      </div>
-
-      <div className="pose-binding-targets-label">
-        Pose at progress=1
-      </div>
-      <div className="pose-binding-targets">
-        {POSE_PROPERTIES.map(({ key, label, step }) => {
-          const value = binding.pose[key];
-          const enabled = value !== undefined;
-          return (
+      {!collapsed && (
+        <>
+          <div className="mapping-row">
+            <span className="mapping-label">in</span>
+            <NumberField
+              label=""
+              value={binding.inMin}
+              onChange={(v) => onChange({ inMin: v })}
+              step={0.05}
+              precision={2}
+            />
+            <span className="mapping-dash">–</span>
+            <NumberField
+              label=""
+              value={binding.inMax}
+              onChange={(v) => onChange({ inMax: v })}
+              step={0.05}
+              precision={2}
+            />
             <label
-              key={key}
-              className={`pose-binding-target ${enabled ? "active" : ""}`}
-              title={
-                enabled
-                  ? `Peak ${label} offset (added on top of base + other bindings at progress=1).`
-                  : `Click to drive ${label} from this pose binding.`
-              }
+              className="pose-binding-clamp"
+              title="Clamp progress to [0, 1]. Uncheck to let extreme channel values overshoot the pose — useful for 'extra-expressive' rigs."
             >
               <input
                 type="checkbox"
-                checked={enabled}
-                onChange={(e) =>
-                  updatePoseTarget(key, e.target.checked ? 0 : null)
-                }
+                checked={isClamped}
+                onChange={(e) => onChange({ clamped: e.target.checked })}
               />
-              <span className="pose-binding-target-label">{label}</span>
-              {enabled && (
-                <NumberField
-                  label=""
-                  value={value ?? 0}
-                  onChange={(v) => updatePoseTarget(key, v)}
-                  step={step}
-                  precision={step >= 1 ? 0 : 2}
-                />
-              )}
+              <span>Clamp</span>
             </label>
-          );
-        })}
-      </div>
+          </div>
 
-      <CornerOffsetsEditor binding={binding} onChange={onChange} />
+          <div
+            className="pose-binding-targets-label"
+            title="Values added when the channel reaches inMax. The pose lerps from 0 to these values as the channel crosses inMin → inMax. Multiple pose bindings on the same sprite stack additively."
+          >
+            Peak values
+          </div>
+          <div className="pose-binding-targets prop-grid prop-grid-stacked">
+            {POSE_PROPERTIES.map(({ key, label, step, precision }) => {
+              const value = binding.pose[key];
+              const enabled = value !== undefined;
+              return (
+                <div
+                  key={key}
+                  className={`pose-binding-target-row ${enabled ? "active" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    className="pose-binding-target-check"
+                    checked={enabled}
+                    onChange={(e) =>
+                      updatePoseTarget(key, e.target.checked ? 0 : null)
+                    }
+                    title={
+                      enabled
+                        ? `Drop ${label} from this pose.`
+                        : `Drive ${label} from this pose.`
+                    }
+                    aria-label={`Toggle ${label} pose target`}
+                  />
+                  <NumberField
+                    label={label}
+                    value={value ?? 0}
+                    onChange={(v) => updatePoseTarget(key, v)}
+                    step={step}
+                    precision={precision}
+                  />
+                </div>
+              );
+            })}
+          </div>
 
-      <PivotEditor binding={binding} onChange={onChange} />
+          <PoseExtras binding={binding} onChange={onChange} />
+        </>
+      )}
     </li>
   );
 }
 
 /**
- * Per-corner pixel-offset editor for a pose binding. Collapsed by
- * default since most poses don't need non-affine deformation. Expands
- * to 4 labeled corner rows with X/Y NumberFields each — same shape as
- * the sprite's base 4-Corner Mesh editor in the Properties panel,
- * because the mental model is identical (these values are deltas
- * applied at progress=1, on top of base).
+ * Optional sub-panels under a pose binding: per-corner mesh offsets
+ * and a custom pivot point. Both are shown as inline toggle buttons
+ * that expand on click — most poses don't use them, so the toggles
+ * stay folded away by default. Putting both toggles in a single
+ * row keeps the row compact when neither is needed.
  *
- * Adding any corner target auto-promotes the sprite to mesh rendering;
- * the user doesn't have to enable 4-Corner Mesh on the sprite first.
+ * State for expanded/collapsed lives in this wrapper rather than
+ * inside the panel components so the panels themselves can be
+ * pure render-only — easier to compose, easier to swap layouts.
  */
-interface CornerOffsetsEditorProps {
-  binding: PoseBinding;
-  onChange: (patch: Partial<PoseBinding>) => void;
-}
-
-const CORNER_LABELS: Record<"tl" | "tr" | "bl" | "br", string> = {
-  tl: "Top-Left",
-  tr: "Top-Right",
-  bl: "Bottom-Left",
-  br: "Bottom-Right",
-};
-
-function CornerOffsetsEditor({
+function PoseExtras({
   binding,
   onChange,
-}: CornerOffsetsEditorProps) {
+}: {
+  binding: PoseBinding;
+  onChange: (patch: Partial<PoseBinding>) => void;
+}) {
+  const hasCorners = binding.poseCornerOffsets !== undefined;
+  const hasPivot =
+    binding.pivot !== undefined &&
+    (binding.pivot.x !== 0 || binding.pivot.y !== 0);
+  const [cornersExpanded, setCornersExpanded] = useState(hasCorners);
+  const [pivotExpanded, setPivotExpanded] = useState(hasPivot);
+
+  return (
+    <>
+      <div className="pose-binding-extras-toggles">
+        <button
+          type="button"
+          className={`pose-binding-extra-toggle ${
+            cornersExpanded ? "expanded" : ""
+          }`}
+          onClick={() => setCornersExpanded((v) => !v)}
+          title="Per-corner pixel offsets — non-affine deformation that affine scaleX can't reproduce. Use case: head-turn poses where the far side compresses (perspective foreshortening)."
+        >
+          + Corner Offsets {hasCorners ? "✓" : ""}
+        </button>
+        <button
+          type="button"
+          className={`pose-binding-extra-toggle ${
+            pivotExpanded ? "expanded" : ""
+          }`}
+          onClick={() => setPivotExpanded((v) => !v)}
+          title="Custom pivot point — scale and rotation in this pose swing around an offset point (e.g. chin-anchored ScaleY for natural head-lean) instead of the sprite's anchor."
+        >
+          + Pivot {hasPivot ? `(${binding.pivot!.x}, ${binding.pivot!.y})` : ""}
+        </button>
+      </div>
+
+      {cornersExpanded && (
+        <CornerOffsetsPanel
+          binding={binding}
+          onChange={onChange}
+          onClear={() => {
+            onChange({ poseCornerOffsets: undefined });
+            setCornersExpanded(false);
+          }}
+        />
+      )}
+
+      {pivotExpanded && (
+        <PivotPanel
+          binding={binding}
+          onChange={onChange}
+          onReset={() => {
+            onChange({ pivot: undefined });
+            setPivotExpanded(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * Per-corner pixel-offset panel for a pose binding. Always rendered
+ * by `PoseExtras` only when its inline toggle is on — no internal
+ * collapsed state. Eight stacked rows (4 corners × X/Y) so the
+ * fields share alignment with the rest of the panel.
+ *
+ * Adding any corner target auto-promotes the sprite to mesh
+ * rendering; the user doesn't have to enable 4-Corner Mesh on the
+ * sprite first.
+ */
+const CORNER_LABELS_SHORT: Record<"tl" | "tr" | "bl" | "br", string> = {
+  tl: "TL",
+  tr: "TR",
+  bl: "BL",
+  br: "BR",
+};
+
+const CORNER_AXES: Array<{
+  corner: "tl" | "tr" | "bl" | "br";
+  axis: "x" | "y";
+}> = [
+  { corner: "tl", axis: "x" },
+  { corner: "tl", axis: "y" },
+  { corner: "tr", axis: "x" },
+  { corner: "tr", axis: "y" },
+  { corner: "bl", axis: "x" },
+  { corner: "bl", axis: "y" },
+  { corner: "br", axis: "x" },
+  { corner: "br", axis: "y" },
+];
+
+function CornerOffsetsPanel({
+  binding,
+  onChange,
+  onClear,
+}: {
+  binding: PoseBinding;
+  onChange: (patch: Partial<PoseBinding>) => void;
+  onClear: () => void;
+}) {
   const corners = binding.poseCornerOffsets;
-  const hasAny = corners !== undefined;
-
-  const [expanded, setExpanded] = useState(hasAny);
-
-  if (!expanded) {
-    return (
-      <button
-        type="button"
-        className="pose-binding-pivot-toggle"
-        onClick={() => setExpanded(true)}
-        title="Drive non-affine corner deformation from this pose. Use case: head-turn poses where the far side of the sprite compresses (perspective foreshortening) — affine scaleX can't reproduce this."
-      >
-        + Corner Offsets {hasAny ? "✓" : ""}
-      </button>
-    );
-  }
 
   const updateCorner = (
     corner: "tl" | "tr" | "bl" | "br",
@@ -292,134 +396,103 @@ function CornerOffsetsEditor({
     });
   };
 
-  const clearCorners = (): void => {
-    onChange({ poseCornerOffsets: undefined });
-    setExpanded(false);
-  };
-
   return (
     <div className="pose-binding-corners">
       <div className="pose-binding-corners-header">
-        <span>Corner Offsets at progress=1</span>
+        <span>Corner Offsets</span>
         <button
           type="button"
           className="pose-binding-pivot-reset"
-          onClick={clearCorners}
+          onClick={onClear}
           title="Disable corner deformation on this pose binding."
         >
           Clear
         </button>
       </div>
-      {(["tl", "tr", "bl", "br"] as const).map((corner) => {
-        const off = corners?.[corner];
-        return (
-          <div key={corner} className="corner-mesh-row">
-            <span className="corner-mesh-label">{CORNER_LABELS[corner]}</span>
-            <div className="prop-pair">
-              <NumberField
-                label="X"
-                value={off?.x ?? 0}
-                onChange={(v) => updateCorner(corner, "x", v)}
-                step={1}
-                precision={0}
-              />
-              <NumberField
-                label="Y"
-                value={off?.y ?? 0}
-                onChange={(v) => updateCorner(corner, "y", v)}
-                step={1}
-                precision={0}
-              />
-            </div>
-          </div>
-        );
-      })}
+      <div className="prop-grid prop-grid-stacked">
+        {CORNER_AXES.map(({ corner, axis }) => {
+          const off = corners?.[corner];
+          const value = (off?.[axis] ?? 0) as number;
+          return (
+            <NumberField
+              key={`${corner}-${axis}`}
+              label={`${CORNER_LABELS_SHORT[corner]} ${axis.toUpperCase()}`}
+              value={value}
+              onChange={(v) => updateCorner(corner, axis, v)}
+              step={1}
+              precision={0}
+            />
+          );
+        })}
+      </div>
       <div className="pose-binding-pivot-hint">
-        Pixel offsets per corner at peak progress. Stacks with the
-        sprite's base corner offsets (if any) and other pose bindings.
-        Auto-promotes the sprite to mesh rendering.
+        Per-corner pixel offsets at peak. Stacks with the sprite's
+        base corner offsets and other pose bindings. Auto-promotes
+        the sprite to mesh rendering.
       </div>
     </div>
   );
 }
 
 /**
- * Pivot editor — collapsed by default since most poses don't need a
- * custom pivot. Expands on click. When expanded, two number inputs +
- * a "Reset to anchor" link. Compensation only applies when scale or
- * rotation pose targets are set, so we surface that in the hint to
- * avoid confusion ("I set pivot but nothing changed" — yeah, because
- * your pose has no scale or rotation in it).
+ * Pivot panel — two stacked rows (Pivot X / Pivot Y) plus a Reset
+ * button. Compensation only applies when scale or rotation targets
+ * are set, so the hint surfaces that to avoid the "I set pivot but
+ * nothing changed" confusion.
  */
-interface PivotEditorProps {
+function PivotPanel({
+  binding,
+  onChange,
+  onReset,
+}: {
   binding: PoseBinding;
   onChange: (patch: Partial<PoseBinding>) => void;
-}
-
-function PivotEditor({ binding, onChange }: PivotEditorProps) {
+  onReset: () => void;
+}) {
   const pivot = binding.pivot;
-  const hasPivot = pivot !== undefined && (pivot.x !== 0 || pivot.y !== 0);
   const hasScaleOrRotation =
     typeof binding.pose.scaleX === "number" ||
     typeof binding.pose.scaleY === "number" ||
     typeof binding.pose.rotation === "number";
-
-  const [expanded, setExpanded] = useState(hasPivot);
-
-  if (!expanded) {
-    return (
-      <button
-        type="button"
-        className="pose-binding-pivot-toggle"
-        onClick={() => setExpanded(true)}
-        title="Set a custom pivot point so scale and rotation in this pose swing around an offset point (e.g. chin-anchored ScaleY for natural head-lean) instead of the sprite's anchor."
-      >
-        + Pivot {hasPivot ? `(${pivot!.x}, ${pivot!.y})` : ""}
-      </button>
-    );
-  }
 
   const updatePivot = (patch: Partial<{ x: number; y: number }>): void => {
     const current = pivot ?? { x: 0, y: 0 };
     onChange({ pivot: { ...current, ...patch } });
   };
 
-  const resetPivot = (): void => {
-    onChange({ pivot: undefined });
-    setExpanded(false);
-  };
-
   return (
     <div className="pose-binding-pivot">
-      <div className="pose-binding-pivot-row">
-        <span className="pose-binding-pivot-label">Pivot</span>
+      <div className="pose-binding-corners-header">
+        <span>Pivot</span>
+        <button
+          type="button"
+          className="pose-binding-pivot-reset"
+          onClick={onReset}
+          title="Clear pivot back to the sprite's anchor."
+        >
+          Reset
+        </button>
+      </div>
+      <div className="prop-grid prop-grid-stacked">
         <NumberField
-          label="X"
+          label="Pivot X"
           value={pivot?.x ?? 0}
           onChange={(v) => updatePivot({ x: v })}
           step={1}
           precision={0}
         />
         <NumberField
-          label="Y"
+          label="Pivot Y"
           value={pivot?.y ?? 0}
           onChange={(v) => updatePivot({ y: v })}
           step={1}
           precision={0}
         />
-        <button
-          type="button"
-          className="pose-binding-pivot-reset"
-          onClick={resetPivot}
-          title="Clear pivot back to the sprite's anchor."
-        >
-          Reset
-        </button>
       </div>
       <div className="pose-binding-pivot-hint">
         {hasScaleOrRotation
-          ? "Pixel offset from sprite anchor. Scale + rotation in this pose pivot around this point. (X right, Y down.)"
-          : "Pivot only affects scale or rotation pose targets — none are set on this binding yet, so changes here won't be visible until you enable Rot, ScX, or ScY above."}
+          ? "Pixel offset from sprite anchor. Scale + rotation pivot around this point. (X right, Y down.)"
+          : "Pivot only affects scale or rotation targets — enable one above to see the effect."}
       </div>
     </div>
   );

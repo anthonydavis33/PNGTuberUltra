@@ -107,6 +107,19 @@ import {
   type PoseEvalOptions,
   type ResolvedCornerOffsets,
 } from "../bindings/evaluate";
+
+/** Neutral editor canvas background — used when stream mode is off
+ *  and the user hasn't opted into previewing the chroma color. Easy
+ *  on the eyes during long rigging sessions. */
+export const EDITOR_BG_HEX = "#1a1a1a";
+
+/** Placeholder texture dimensions for sprites without a real asset.
+ *  Exported so the React layer can use the same numbers when
+ *  computing anchor compensation — must EXACTLY match the rendered
+ *  texture's size, otherwise tiny precision mismatches cause the
+ *  art to drift while the user adjusts the pivot. */
+export const PLACEHOLDER_TEX_W = 120;
+export const PLACEHOLDER_TEX_H = 160;
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
 import { AnimationRunner } from "../animations/runner";
 import { getMouseSource } from "../inputs/MouseSource";
@@ -144,6 +157,15 @@ export class PixiApp {
    *  0 — the binding contributes nothing, so the sprite stays at
    *  base when all relevant bindings are muted. */
   private mutedPoseBindings: ReadonlySet<string> = new Set();
+  /** When set, the runtime renders ONLY this sprite (others go
+   *  invisible + non-interactive) and pointer events on the stage
+   *  drive pivot-move updates instead of normal selection / drag.
+   *  The Properties panel's "Move pivot" toggle drives this. */
+  private pivotMoveTargetId: string | null = null;
+  /** True while the user is holding a pointer down in pivot-move
+   *  mode — drives the drag behavior so the pivot follows the
+   *  cursor through pointermove updates. Cleared on pointerup. */
+  private pivotMoveDragging = false;
   /** Drag state for the pivot dot — independent from the sprite drag
    *  state since the deltas dispatch to a different store action. */
   private pivotDragState: { spriteId: string; bindingId: string; lastX: number; lastY: number } | null = null;
@@ -267,7 +289,7 @@ export class PixiApp {
     // overlays land in baseTransform, before modifier passes run.
     this.modifierRunner.setAnimationRunner(this.animationRunner);
     await this.app.init({
-      background: "#1a1a1a",
+      background: EDITOR_BG_HEX,
       resizeTo: host,
       antialias: true,
       autoDensity: true,
@@ -631,6 +653,36 @@ export class PixiApp {
     this.mutedPoseBindings = ids;
   }
 
+  /** Enter / exit pivot-move mode for the given sprite. While set,
+   *  every other sprite renders invisibly and the next stage click
+   *  fires `onPivotMoveClick` with the world-space position so the
+   *  caller can compute the new anchor. Pass `null` to exit. */
+  setPivotMoveTarget(spriteId: string | null): void {
+    this.pivotMoveTargetId = spriteId;
+    // Reapply visibility immediately so the change shows even if
+    // the next ticker frame is paused (e.g. window hidden).
+    if (spriteId === null) {
+      // Restore visibility on next tick by letting the ticker re-
+      // run computeSpriteVisibility. If paused, force one apply now.
+      for (const [id, renderable] of this.spriteMap) {
+        const ms = useAvatar
+          .getState()
+          .model.sprites.find((s) => s.id === id);
+        if (ms) renderable.visible = computeSpriteVisibility(ms);
+      }
+    }
+  }
+
+  /** Reports a click in pivot-move mode. Position is in world
+   *  coordinates (same units as a sprite's transform.x/y). React
+   *  layer translates this into a setSpriteAnchorPreservingArt
+   *  call. */
+  onPivotMoveClick?: (
+    spriteId: string,
+    worldX: number,
+    worldY: number,
+  ) => void;
+
   /** Mark a specific pose binding as actively being edited via canvas
    *  handles. The pivot dot becomes visible and draggable; on the next
    *  tick its position mirrors `<sprite world pos> + <binding.pivot>`.
@@ -891,7 +943,17 @@ export class PixiApp {
       const pixiSprite = this.spriteMap.get(ms.id);
       if (!pixiSprite) continue;
 
-      pixiSprite.visible = computeSpriteVisibility(ms);
+      // Pivot-move mode hides every other sprite so the user can
+      // pinpoint the anchor on the target one without clutter. The
+      // model's `visible` is unchanged — we override only the
+      // rendered visibility for this frame.
+      if (this.pivotMoveTargetId !== null) {
+        pixiSprite.visible =
+          ms.id === this.pivotMoveTargetId &&
+          computeSpriteVisibility(ms);
+      } else {
+        pixiSprite.visible = computeSpriteVisibility(ms);
+      }
 
       // Sprite-sheet frame swap. Priority (highest first):
       //   1. An animation sheetRange override (event-triggered playback —
@@ -1172,6 +1234,26 @@ export class PixiApp {
     this.app.stage.addEventListener(
       "pointerdown",
       (e: FederatedPointerEvent) => {
+        // Pivot-move mode owns the click — no selection, no drag,
+        // just translate the screen position into world coords and
+        // hand off to the React layer for the anchor update. Run
+        // before the overlay-drag check so the user can't
+        // accidentally grab a free-transform handle while in pivot-
+        // move mode. Click + drag: pointerdown fires once, then the
+        // globalpointermove handler below keeps firing while the
+        // pointer is held — pivot follows the cursor live.
+        if (this.pivotMoveTargetId !== null) {
+          const worldX = (e.global.x - this.world.x) / this.zoom;
+          const worldY = (e.global.y - this.world.y) / this.zoom;
+          this.onPivotMoveClick?.(
+            this.pivotMoveTargetId,
+            worldX,
+            worldY,
+          );
+          this.pivotMoveDragging = true;
+          e.stopImmediatePropagation();
+          return;
+        }
         if (this.tryStartOverlayDrag(e)) {
           e.stopImmediatePropagation();
         }
@@ -1184,6 +1266,20 @@ export class PixiApp {
     // Handles both sprite drags AND pivot-dot drags (separate states
     // since they dispatch to different callbacks).
     this.app.stage.on("globalpointermove", (e: FederatedPointerEvent) => {
+      // Pivot-move drag — fires per move while the pointer is held
+      // in pivot-move mode. Translates the cursor's screen position
+      // into world coords on every move so the pivot tracks the
+      // mouse continuously instead of only updating on click.
+      if (this.pivotMoveDragging && this.pivotMoveTargetId !== null) {
+        const worldX = (e.global.x - this.world.x) / this.zoom;
+        const worldY = (e.global.y - this.world.y) / this.zoom;
+        this.onPivotMoveClick?.(
+          this.pivotMoveTargetId,
+          worldX,
+          worldY,
+        );
+      }
+
       // Screen-pixel deltas divided by zoom give sensible world-unit
       // moves: drag 100 screen px at 5× zoom = sprite shifts 20 world
       // units, which is the visible 100 px the user just dragged
@@ -1267,11 +1363,19 @@ export class PixiApp {
       }
       this.pivotDragState = null;
       this.transformDragState = null;
+      this.pivotMoveDragging = false;
     };
     window.addEventListener("pointerup", this.windowPointerUpHandler);
 
-    // Click on empty stage = deselect.
+    // Click on empty stage = deselect — EXCEPT in pivot-move mode,
+    // where the user is intentionally clicking on the canvas to set
+    // the anchor and the click often lands on empty stage (every
+    // other sprite is hidden in this mode, leaving nothing else to
+    // hit). Without this guard, every pivot click double-fires:
+    // pivot moves, then pointertap immediately deselects, leaving
+    // the user with their carefully-placed pivot and no selection.
     this.app.stage.on("pointertap", (e: FederatedPointerEvent) => {
+      if (this.pivotMoveTargetId !== null) return;
       if (e.target === this.app.stage) {
         this.onSelect?.(null);
       }
@@ -1331,8 +1435,19 @@ export class PixiApp {
 
   private getPlaceholderTexture(): Texture {
     if (this.placeholderTexture) return this.placeholderTexture;
+    // Build the rect 2px inset from the target bounds so the
+    // 2px-wide centered stroke extends back out to exactly
+    // (PLACEHOLDER_TEX_W × PLACEHOLDER_TEX_H). Without the inset,
+    // the stroke would push the generated texture's bounds out by
+    // 1px on each side (122×162), which would cause sub-pixel drift
+    // in anchor compensation math that assumes the constants. This
+    // is the kind of detail that's invisible until the user starts
+    // moving pivots and notices the art shimmering; lock the size
+    // exactly here and the math works out regardless of asset.
+    const w = PLACEHOLDER_TEX_W;
+    const h = PLACEHOLDER_TEX_H;
     const g = new Graphics()
-      .rect(-60, -80, 120, 160)
+      .rect(-w / 2 + 1, -h / 2 + 1, w - 2, h - 2)
       .fill(0xff7755)
       .stroke({ color: 0xffffff, width: 2 });
     this.placeholderTexture = this.app.renderer.generateTexture(g);

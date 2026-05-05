@@ -36,13 +36,22 @@ interface SettingsState {
    *  session. */
   streamMode: boolean;
   setStreamMode: (on: boolean) => void;
-  /** Canvas background color while the app is running. Defaults to
-   *  chroma green (#00ff00) so OBS users can chroma-key the avatar
-   *  out of context. Stored as #RRGGBB hex. Outside of stream mode
-   *  the user mostly doesn't notice this color (the editor chrome
-   *  obscures most of the canvas). */
+  /** Canvas chroma-key color (shown behind the avatar in stream mode
+   *  so OBS can key it out). Stored as #RRGGBB hex; defaults to
+   *  chroma green (#00ff00). Outside of stream mode the editor uses
+   *  a neutral dark background instead of this color — see
+   *  `previewChromaKey` for an opt-in to preview the chroma color
+   *  while editing. */
   chromaKeyColor: string;
   setChromaKeyColor: (color: string) => void;
+  /** When true, the canvas shows the chroma-key color in the editor
+   *  even when stream mode is OFF — useful for previewing how the
+   *  avatar will look against the keyed-out color without committing
+   *  to full stream mode. Default false because staring at solid
+   *  green for hours while rigging is fatiguing; the neutral dark
+   *  editor background is much easier on the eyes. */
+  previewChromaKey: boolean;
+  setPreviewChromaKey: (on: boolean) => void;
   /** Master kill switch for keyboard + mouse listening. When true,
    *  KeyboardSource and MouseSource short-circuit — no events fire,
    *  no channels publish, no bindings/animations react. Mic and
@@ -109,6 +118,8 @@ export const useSettings = create<SettingsState>()(
       setStreamMode: (on) => set({ streamMode: on }),
       chromaKeyColor: "#00ff00",
       setChromaKeyColor: (color) => set({ chromaKeyColor: color }),
+      previewChromaKey: false,
+      setPreviewChromaKey: (on) => set({ previewChromaKey: on }),
       // Default OFF — input listening on by default, user opts INTO
       // pausing rather than having to opt out every session.
       inputPaused: false,

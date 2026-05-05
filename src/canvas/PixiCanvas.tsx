@@ -7,7 +7,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { PixiApp } from "./pixiApp";
+import {
+  EDITOR_BG_HEX,
+  PLACEHOLDER_TEX_H,
+  PLACEHOLDER_TEX_W,
+  PixiApp,
+} from "./pixiApp";
 import { loadFilesAsAssets } from "./assetLoader";
 import { useAvatar } from "../store/useAvatar";
 import { useSettings } from "../store/useSettings";
@@ -42,14 +47,24 @@ export function PixiCanvas() {
   const addSprite = useAvatar((s) => s.addSprite);
   const wheelZoomMode = useSettings((s) => s.wheelZoomMode);
   const chromaKeyColor = useSettings((s) => s.chromaKeyColor);
+  const previewChromaKey = useSettings((s) => s.previewChromaKey);
   // Transparency is only effective in stream mode — outside it the
   // editor stays opaque so users can actually see what they're
   // editing. We compute the effective alpha here from both flags.
   const streamMode = useSettings((s) => s.streamMode);
   const transparentWindow = useSettings((s) => s.transparentWindow);
   const effectiveAlpha = streamMode && transparentWindow ? 0 : 1;
+  // Effective canvas color. Stream mode always shows the chroma color
+  // (so OBS chroma-key picks it up). Outside stream mode the editor
+  // uses a neutral dark background so rigging sessions aren't a
+  // hours-long stare into solid green — unless the user opts into
+  // previewChromaKey to see exactly what'll be keyed out.
+  const effectiveBgColor =
+    streamMode || previewChromaKey ? chromaKeyColor : EDITOR_BG_HEX;
   const activePoseBinding = useEditor((s) => s.activePoseBinding);
   const mutedPoseBindings = useEditor((s) => s.mutedPoseBindings);
+  const pivotMoveMode = useEditor((s) => s.pivotMoveMode);
+  const setPivotMoveMode = useEditor((s) => s.setPivotMoveMode);
 
   // Init Pixi once on mount; tear down on unmount.
   useEffect(() => {
@@ -116,6 +131,64 @@ export function PixiCanvas() {
         });
       };
 
+      // Pivot move mode: a click on the canvas in this mode means
+      // "set the selected sprite's anchor to here". We compute the
+      // new anchor fraction from the click world position by
+      // inverting the sprite's effective scale + rotation, then
+      // hand off to setSpriteAnchorPreservingArt — which atomically
+      // updates anchor + transform so the visible art stays put.
+      pixi.onPivotMoveClick = (spriteId, worldX, worldY) => {
+        const state = useAvatar.getState();
+        const sprite = state.model.sprites.find((s) => s.id === spriteId);
+        if (!sprite) return;
+        // Frame size — use the asset's real dimensions when present;
+        // fall back to PLACEHOLDER_TEX_W/H for asset-less sprites so
+        // the anchor math produces a visible delta and matches the
+        // actual rendered texture size. Sheet sprites slice the
+        // asset into cells; floor matches sliceSheet's integer
+        // frame dimensions, avoiding sub-pixel drift.
+        let w: number;
+        let h: number;
+        const asset = sprite.asset ? state.assets[sprite.asset] : null;
+        if (asset && asset.width > 0 && asset.height > 0) {
+          if (sprite.sheet) {
+            w = Math.floor(asset.width / Math.max(1, sprite.sheet.cols));
+            h = Math.floor(asset.height / Math.max(1, sprite.sheet.rows));
+          } else {
+            w = asset.width;
+            h = asset.height;
+          }
+        } else {
+          w = PLACEHOLDER_TEX_W;
+          h = PLACEHOLDER_TEX_H;
+        }
+        const sx = sprite.transform.scaleX || 1;
+        const sy = sprite.transform.scaleY || 1;
+        const rotRad = (sprite.transform.rotation * Math.PI) / 180;
+        const cos = Math.cos(rotRad);
+        const sin = Math.sin(rotRad);
+        // Delta from current anchor (=transform.x/y) to click in
+        // world coords; un-rotate, un-scale to get the same delta
+        // in unscaled local pixels, then divide by texture size to
+        // get the anchor-fraction delta.
+        const wDx = worldX - sprite.transform.x;
+        const wDy = worldY - sprite.transform.y;
+        const unrotX = wDx * cos + wDy * sin;
+        const unrotY = -wDx * sin + wDy * cos;
+        const newAx = sprite.anchor.x + unrotX / (sx * w);
+        const newAy = sprite.anchor.y + unrotY / (sy * h);
+        // Clamp into a sane range — anchors slightly outside [0, 1]
+        // are valid in Pixi and useful in some rigs, but past that
+        // the result is almost always a misclick.
+        const clampedAx = Math.max(-0.25, Math.min(1.25, newAx));
+        const clampedAy = Math.max(-0.25, Math.min(1.25, newAy));
+        state.setSpriteAnchorPreservingArt(
+          spriteId,
+          { x: clampedAx, y: clampedAy },
+          { w, h },
+        );
+      };
+
       // Free-transform handles. The 4 corner squares drive
       // `poseCornerOffsets` for true non-affine mesh deformation —
       // affine scale handles are gone (scale alone can't express
@@ -169,8 +242,12 @@ export function PixiCanvas() {
       // pixi.init resolves and appRef.current gets set), so we push
       // the initial values here.
       pixi.setWheelZoomMode(useSettings.getState().wheelZoomMode);
-      pixi.setBackgroundColor(useSettings.getState().chromaKeyColor);
       const s0 = useSettings.getState();
+      pixi.setBackgroundColor(
+        s0.streamMode || s0.previewChromaKey
+          ? s0.chromaKeyColor
+          : EDITOR_BG_HEX,
+      );
       pixi.setBackgroundAlpha(
         s0.streamMode && s0.transparentWindow ? 0 : 1,
       );
@@ -207,12 +284,13 @@ export function PixiCanvas() {
     appRef.current?.setWheelZoomMode(wheelZoomMode);
   }, [wheelZoomMode]);
 
-  // Push chroma key color into Pixi's renderer background. Same effect
-  // pattern: react to settings changes immediately so the user sees
-  // the new color without a reload.
+  // Push effective canvas color into Pixi's renderer background.
+  // Picks chroma when stream mode is on (or the preview toggle is
+  // on for editor preview), neutral editor color otherwise — see
+  // effectiveBgColor above for the full logic.
   useEffect(() => {
-    appRef.current?.setBackgroundColor(chromaKeyColor);
-  }, [chromaKeyColor]);
+    appRef.current?.setBackgroundColor(effectiveBgColor);
+  }, [effectiveBgColor]);
 
   // Background alpha tracks the combined streamMode + transparentWindow
   // state. Only goes 0 (transparent) when both are on, otherwise 1
@@ -262,6 +340,22 @@ export function PixiCanvas() {
   useEffect(() => {
     appRef.current?.setMutedPoseBindings(mutedPoseBindings);
   }, [mutedPoseBindings]);
+
+  // Pivot-move mode targeting. Active when both the user has
+  // toggled the mode on AND a sprite is selected — without a
+  // selection, there's nothing to retarget. Deselecting the sprite
+  // mid-mode clears the runtime target but leaves the toggle's UI
+  // state alone; if the user re-selects, the mode resumes naturally.
+  useEffect(() => {
+    const target = pivotMoveMode && selectedId ? selectedId : null;
+    appRef.current?.setPivotMoveTarget(target);
+  }, [pivotMoveMode, selectedId]);
+
+  // Auto-exit pivot mode if the selection clears entirely — the
+  // toggle would otherwise stay armed against nothing.
+  useEffect(() => {
+    if (!selectedId && pivotMoveMode) setPivotMoveMode(false);
+  }, [selectedId, pivotMoveMode, setPivotMoveMode]);
 
   // Mirror PixiApp's zoom into React state via RAF poll.
   //
@@ -363,7 +457,13 @@ export function PixiCanvas() {
   return (
     <div
       ref={hostRef}
-      className={`pixi-host ${isDragOver ? "drag-over" : ""}`}
+      className={[
+        "pixi-host",
+        isDragOver ? "drag-over" : "",
+        pivotMoveMode ? "pivot-move-mode" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}

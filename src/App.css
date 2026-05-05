@@ -247,18 +247,25 @@ html.transparent-bg #root {
   user-select: text;
 }
 
+/* Compact base spacing for the Properties panel — each section gets
+ * its own collapsible header, so the panel-level chrome can be
+ * tight. Sticks at 12px on the layers panel which doesn't need it. */
+.panel.properties {
+  padding: 10px 12px;
+}
+
 .panel h2 {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-dim);
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
   font-weight: 600;
 }
 
 .panel h3 {
   font-size: 13px;
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
   color: var(--text);
   font-weight: 500;
 }
@@ -446,14 +453,70 @@ html.transparent-bg #root {
 .prop-grid {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
 
 .prop-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
+}
+
+/* Compact NumberField in the Properties panel — label INLINE with the
+ * input on a single row, instead of stacked label-above-input. Halves
+ * the row height; what we lose in label width we make up for by
+ * letting the input shrink (the value matters more than the label
+ * once the user knows what each row does). Other usages of
+ * NumberField (PoseBindingRow, ThresholdPopover, etc.) keep the
+ * stacked default. */
+.prop-grid .number-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.prop-grid .number-field-label {
+  margin-left: 0;
+  flex-shrink: 0;
+  padding: 1px 4px;
+  /* Stretch the label's hit area to span the full row height (which
+   * the input drives). Without this the draggable target is just
+   * the text's line-height — frustratingly thin for a scrub control.
+   * The label's own align-items: center keeps the text vertically
+   * centered inside the stretched element, so visually nothing
+   * changes — only the click/drag target grows. */
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+}
+
+.prop-grid .number-field-label::before {
+  margin-right: 3px;
+}
+
+.prop-grid .number-field input {
+  /* Match prop-row-control's flex shape — `1 1 0%` is the
+   * cross-browser-safe way to make a flex item that grows from
+   * zero, regardless of the input's intrinsic content width. */
+  flex: 1 1 0%;
+  min-width: 0;
+  padding: 3px 6px;
+}
+
+/* Stacked variant — every NumberField on its own row, with all
+ * input fields starting at the same x-position regardless of label
+ * length. Achieved by giving the label a fixed width that fits the
+ * widest label in the section ("ANCHOR X" / "ROTATION" / "SCALE X")
+ * uppercased + with the ↔ scrub-prefix. white-space: nowrap forces
+ * "ANCHOR X" to stay on one line — without it the natural break
+ * point splits the word from the axis on narrow panels. Inputs
+ * flex into the remaining column space, so eyes can scan straight
+ * down the right side without zig-zagging. */
+.prop-grid-stacked .number-field-label {
+  min-width: 92px;
+  width: 92px;
+  white-space: nowrap;
 }
 
 .prop-pair > .number-field {
@@ -524,54 +587,73 @@ html.transparent-bg #root {
   border-color: var(--accent);
 }
 
+/* Hide native browser spinner arrows on all NumberField inputs. The
+ * label already supports drag-to-scrub + the input takes typed
+ * values; the arrows just clutter the UI and chip away at horizontal
+ * space we'd rather give to the value. Both vendor prefixes plus the
+ * Firefox-specific text-field style cover all current engines. */
 .number-field input::-webkit-inner-spin-button,
 .number-field input::-webkit-outer-spin-button {
-  opacity: 0.5;
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
 }
 
-.number-field input::-webkit-inner-spin-button:hover,
-.number-field input::-webkit-outer-spin-button:hover {
-  opacity: 1;
+.number-field input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
-/* Reset transform button --------------------------------------------- */
-.reset-transform {
-  display: inline-flex;
+/* Generic single-line label + control row, used inside
+ * `.prop-grid-stacked` for non-NumberField entries (selects,
+ * checkboxes, text inputs) so they share the same alignment as the
+ * NumberField rows around them. The label column matches the
+ * NumberField label width so input edges line up; padding-left
+ * compensates for the ↔ scrub-prefix that the NumberField labels
+ * carry, keeping label text visually aligned across both. */
+.prop-row {
+  display: flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
-  width: 100%;
-  margin-top: 16px;
+  /* Cap to parent width so flex children with `flex: 1 1 0%` can't
+   * compute past the column's content area — without this, a wide
+   * select inside the row would expand the row past its container. */
+  max-width: 100%;
+  min-width: 0;
 }
 
-/* Sprite sheet section ------------------------------------------------ */
-.sprite-sheet-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sprite-sheet-loop-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.prop-row-label {
+  width: 92px;
+  min-width: 92px;
+  flex-shrink: 0;
   font-size: 10px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 600;
+  padding: 1px 4px 1px 14px;
+  white-space: nowrap;
 }
 
+.prop-row-control {
+  /* `flex: 1 1 0%` (instead of `flex: 1; width: 0`) makes <select>
+   * elements grow predictably — some browsers' native select widget
+   * ignores width:0 + flex-grow combinations and stays at intrinsic
+   * width. The 0% basis keeps the math correct. */
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+/* Sprite sheet section ------------------------------------------------ */
 .sprite-sheet-loop {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: 3px 6px;
+  border-radius: 3px;
   font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
-  width: 100%;
   text-transform: none;
   letter-spacing: normal;
 }
@@ -581,23 +663,103 @@ html.transparent-bg #root {
   border-color: var(--accent);
 }
 
-/* Properties panel sub-section (Bindings, future Modifiers) ---------- */
+/* Properties panel sub-section (Transform / Anchor / Bindings / etc.)
+ * Compact spacing — long rigging sessions benefit from being able to
+ * fit several sections on screen without scrolling. */
 .properties-section {
-  margin-top: 18px;
-  padding-top: 14px;
+  margin-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
 }
 
+.properties-section.collapsed {
+  /* Tighter when collapsed so a row of collapsed sections looks
+   * compact rather than wasted-vertical. */
+  padding-bottom: 0;
+}
+
+/* Nested section (e.g. Bindings → Visibility / Transforms / Pose).
+ * Visually de-emphasized vs. a top-level section: dashed thin
+ * border, smaller margin, inset slightly so the hierarchy reads
+ * at a glance. The chevron + click-to-collapse behavior is
+ * inherited from .properties-section. */
+.properties-section .properties-section {
+  margin-top: 6px;
+  padding-top: 6px;
+  padding-left: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.properties-section .properties-section:first-child {
+  /* The first nested section sits directly under the parent's
+   * header — the parent already has a separator above, so we don't
+   * need another between header and first child. */
+  border-top: none;
+  padding-top: 2px;
+  margin-top: 4px;
+}
+
+.properties-section .properties-section .properties-section-header {
+  /* Slightly de-emphasized header for nested sections — same
+   * weight, just dimmer until hovered. Keeps the hierarchy clear
+   * without making sub-sections feel separate from the parent. */
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+/* Section header is the click target for collapsing. The chevron
+ * left of the title rotates between right (collapsed) and down
+ * (expanded). Action buttons on the right stop click propagation
+ * so pressing them doesn't toggle collapse. */
 .properties-section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  font-size: 11px;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-dim);
   font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.properties-section-header:hover {
+  color: var(--text);
+}
+
+.properties-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.properties-section-header:hover .properties-section-chevron {
+  color: var(--accent);
+}
+
+.properties-section-title {
+  flex: 1;
+}
+
+.properties-section.collapsed .properties-section-header {
+  margin-bottom: 0;
+}
+
+.properties-section-body {
+  /* Hooks: nothing animated for v1. If we add a slide animation
+   * later, live transforms go here. */
+}
+
+.properties-section-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin: 4px 0 0;
 }
 
 .properties-section-header .tool-btn {
@@ -605,6 +767,12 @@ html.transparent-bg #root {
   letter-spacing: normal;
   font-size: 11px;
   padding: 3px 8px;
+}
+
+.properties-section-header .tool-btn.active {
+  background: rgba(255, 119, 85, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Clipping section: a single labeled picker. Tight row, similar feel to
@@ -752,9 +920,55 @@ html.transparent-bg #root {
 
 .transform-binding-row-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 24px;
+  /* Columns: [chevron] [channel] [arrow] [target] [delete]
+   *
+   * Target is fixed at 56px — the bare minimum to fit the longest
+   * abbreviated label ("SC X" / "SC Y") plus the native select's
+   * dropdown arrow at 12px monospace. Every pixel saved here goes to
+   * the channel column (`minmax(0, 1fr)`) since channel names like
+   * "MouthRollLower" / "FaceMouthOpen" / "MicVolume" are the long
+   * ones users scan, and the target dropdown has plenty of empty
+   * gutter at the original 70px to give back. If "SC X" ever starts
+   * truncating in this column, that's the floor — bump back up. */
+  grid-template-columns: 18px minmax(0, 1fr) auto 56px 24px;
   gap: 4px;
   align-items: center;
+}
+
+/* Collapsed binding row hides everything below the top line, so
+ * the row reads as a single channel→target chip in the list. The
+ * outer padding tightens because there's no body content. */
+.transform-binding-row.collapsed {
+  padding: 4px 8px;
+  gap: 0;
+}
+
+/* Chevron toggle on each binding row — opens / closes the mapping
+ * editor. Tiny, transparent, fades to accent on hover so it sits
+ * quietly until the user wants it. */
+.binding-row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.binding-row-chevron:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.binding-row-chevron:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .transform-binding-arrow {
@@ -822,9 +1036,16 @@ html.transparent-bg #root {
   margin-bottom: 4px;
 }
 
+.pose-binding-row.collapsed {
+  /* Tighten when collapsed — only the top row is visible. */
+  padding: 4px 8px;
+  gap: 0;
+}
+
 .pose-binding-row-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 24px 24px;
+  /* Columns: [chevron] [channel] [mute] [canvas-edit] [delete] */
+  grid-template-columns: 18px minmax(0, 1fr) 24px 24px 24px;
   gap: 6px;
   align-items: center;
 }
@@ -882,11 +1103,12 @@ html.transparent-bg #root {
   border-color: var(--accent);
 }
 
-.pose-binding-arrow {
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-weight: 600;
+/* Pose binding's IN row has a Clamp toggle that the transform
+ * binding's row doesn't — extend the grid to a 5th column so Clamp
+ * sits on the same line as the range, instead of wrapping to a
+ * lonely second row. */
+.pose-binding-row .mapping-row {
+  grid-template-columns: 28px 1fr auto 1fr auto;
 }
 
 .pose-binding-clamp {
@@ -896,12 +1118,14 @@ html.transparent-bg #root {
   font-size: 10px;
   color: var(--text-dim);
   cursor: pointer;
-  margin-left: 6px;
+  margin-left: 0;
   white-space: nowrap;
+  padding-left: 4px;
 }
 
 .pose-binding-clamp input[type="checkbox"] {
   margin: 0;
+  accent-color: var(--accent);
 }
 
 .pose-binding-targets-label {
@@ -913,12 +1137,58 @@ html.transparent-bg #root {
   margin-top: 4px;
 }
 
-.pose-binding-targets {
+/* Pose targets — one row per property (X / Y / Rotation / Scale X /
+ * Scale Y), stacked vertically with the checkbox at the start, then
+ * the NumberField (label + input) styled by prop-grid-stacked. The
+ * row's `prop-grid prop-grid-stacked` classes inherit the
+ * label-aligned column layout used by the Transform / Anchor
+ * sections, so visually the pose targets read consistently with the
+ * rest of the panel. */
+.pose-binding-target-row {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+  /* Allow the row's flex children to shrink below their content
+   * width — without this, a wide NumberField input could push the
+   * checkbox or label outside the parent's box. */
+  min-width: 0;
 }
 
+/* The NumberField inside a pose-target row needs to be a proper
+ * flex child: grow into the space remaining after the checkbox,
+ * AND shrink below its intrinsic content width so the input doesn't
+ * push the row past its parent. Without this, the NumberField
+ * defaults to `flex: 0 1 auto` and stays at content width, which
+ * is wide enough to overflow the row. */
+.pose-binding-target-row .number-field {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+.pose-binding-target-check {
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* Dim the NumberField when the target isn't checked — both label
+ * and input go semi-transparent so the row reads as "available but
+ * not contributing". Typing into the input still auto-enables the
+ * target via the underlying onChange. */
+.pose-binding-target-row:not(.active) .number-field-label {
+  opacity: 0.5;
+}
+
+.pose-binding-target-row:not(.active) .number-field input {
+  opacity: 0.55;
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Legacy chip-style pose target rules — superseded by the stacked
+ * layout above. Kept here only for the few internal references that
+ * still expect the old class shape; new pose rows use
+ * .pose-binding-target-row. */
 .pose-binding-target {
   display: inline-flex;
   align-items: center;
@@ -952,7 +1222,47 @@ html.transparent-bg #root {
   color: var(--text);
 }
 
-/* Pivot editor — collapsed by default to keep the row compact. */
+/* Pose-extras toggle row — inline buttons that expand the Corner
+ * Offsets / Pivot panels below. Two toggles share the row so neither
+ * dominates when both are collapsed; when one expands, the panel
+ * stacks below and pushes layout naturally. */
+.pose-binding-extras-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pose-binding-extra-toggle {
+  /* Sized to content rather than flex-share — Pivot is short ("+ Pivot")
+   * while Corner Offsets needs more room ("+ Corner Offsets ✓"), and
+   * splitting the row equally just truncated the longer label.
+   * flex: 0 0 auto keeps each button at its natural label width. */
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 3px 8px;
+  text-align: left;
+  white-space: nowrap;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.pose-binding-extra-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.pose-binding-extra-toggle.expanded {
+  border-style: solid;
+  color: var(--text);
+}
+
+/* Legacy pivot-toggle — kept around in case any caller still
+ * references it; new pose extras use .pose-binding-extra-toggle. */
 .pose-binding-pivot-toggle {
   align-self: flex-start;
   background: transparent;
@@ -1367,22 +1677,76 @@ html.transparent-bg #root {
 }
 
 /* Animation rows --------------------------------------------------- */
-.animation-row {
+/* Prefixed with `.panel li` so the row's padding (and gap, and other
+ * `.panel li` defaults) actually win on specificity — without the
+ * prefix, `.panel li { padding: 6px 4px 6px 2px; gap: 4px; cursor: grab }`
+ * silently overrode everything set here, and visual changes to padding
+ * (e.g. tightening from 4px to 2px on the right) never landed. (0,2,1)
+ * beats (0,1,1). The other panel-card rows (modifier-row, pose-binding-
+ * row, transform-binding-row) currently inherit `.panel li`'s padding
+ * — they're left as-is for now since the user only flagged the
+ * animation row's edge spacing. If similar tightening is wanted there,
+ * apply the same `.panel li.<row-class>` prefix. */
+.panel li.animation-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  /* Tight horizontal padding (2px) so labels sit close to the row's
+   * left border and inputs hug the right border — the user wants
+   * the row's data area to feel "spread to the edges" rather than
+   * inset. The row's background + border still reads as a card
+   * thanks to vertical padding and the radius. */
+  padding: 6px 2px;
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--border);
   border-radius: 4px;
   margin-bottom: 4px;
+  cursor: default;
+  /* min-width: 0 lets flex-grow children inside shrink past their
+   * intrinsic content width, instead of forcing the row past its
+   * parent's column. Combined with `flex: 1 1 0%` on the relevant
+   * inputs, every row's content sizes itself naturally to fit the
+   * column — no clipping, no overflow. */
+  min-width: 0;
 }
 
+.panel li.animation-row.collapsed {
+  /* When collapsed only the header is visible — gap to zero so the
+   * row reads as a single chip. */
+  gap: 0;
+  padding: 4px 2px;
+}
+
+/* Override the layer-tree grab/grabbing affordance — animation rows
+ * aren't draggable, and `.panel li:active { cursor: grabbing }` would
+ * otherwise flicker into a grabbing cursor on every input focus. */
+.panel li.animation-row:active {
+  cursor: default;
+}
+
+.panel li.animation-row:hover {
+  /* `.panel li:hover` brightens the background — kill that for the
+   * row itself so it doesn't compete with the row's tinted card
+   * styling. (Buttons inside still hover normally.) */
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* Header row: chevron + name input + trash. Shares the chevron
+ * styling with binding rows (.binding-row-chevron). */
 .animation-row-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  gap: 6px;
+  display: flex;
   align-items: center;
+  gap: 6px;
+}
+
+.animation-row-header > .animation-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.animation-row-header > .binding-delete {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .animation-name {
@@ -1401,21 +1765,10 @@ html.transparent-bg #root {
   border-color: var(--accent);
 }
 
-.animation-row-section {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.animation-row-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  font-weight: 600;
-}
-
+/* Selects + text inputs inside the animation row inherit the
+ * compact panel-input look — small padding, accent focus. The
+ * prop-grid-stacked context already gives them flex:1 / width:100%
+ * via .prop-row-control, so no width rule needed here. */
 .animation-row select,
 .animation-row input[type="text"] {
   background: var(--bg);
@@ -1434,35 +1787,37 @@ html.transparent-bg #root {
   border-color: var(--accent);
 }
 
-.animation-trigger-op,
-.animation-trigger-value,
-.animation-mode,
-.animation-easing {
+.animation-row select.prop-row-control,
+.animation-row input.prop-row-control {
   font-family: ui-monospace, monospace;
 }
 
-.animation-row .number-field {
-  display: inline-flex;
-  align-items: center;
-}
-
-.animation-row .number-field-label:empty {
-  display: none;
-}
-
-.animation-row .number-field input {
-  width: 60px;
-}
-
+/* Body-kind toggle (Tween / Sheet range). Two equal-width buttons.
+ * The thin top border separates the body section from the timing
+ * config above without adding a heavy header — visual grouping with
+ * minimal chrome. */
 .animation-body-toggle {
   display: flex;
   gap: 4px;
-  margin-top: 4px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
 }
 
 .animation-body-toggle button {
-  flex: 1;
-  background: var(--bg);
+  /* Equal-width split that NEVER shrinks below the label's content
+   * width — `min-width: max-content` ensures "Sheet range" always
+   * has enough surface to sit on, even when the row is tight. With
+   * flex: 1 1 auto the buttons still split available space evenly,
+   * but they stop at content size as a floor instead of collapsing
+   * past it like `min-width: 0` would allow. Background is a
+   * subtle tint (instead of the panel's dark `--bg`) so non-active
+   * buttons read as actual buttons against the row's already-
+   * tinted background. */
+  flex: 1 1 auto;
+  min-width: max-content;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
   color: var(--text-dim);
   font-family: inherit;
@@ -1483,50 +1838,73 @@ html.transparent-bg #root {
   cursor: not-allowed;
 }
 
+/* Tween targets reuse the pose-binding-target-row layout for
+ * consistency: checkbox + label-aligned NumberField, dim when
+ * unchecked. The .pose-binding-target-row CSS lives elsewhere; this
+ * rule just gives the targets container a tiny top margin so it
+ * doesn't collide with the body toggle above. */
 .animation-tween-targets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  margin-top: 2px;
 }
 
-.animation-tween-target {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 11px;
-  cursor: pointer;
-  background: var(--bg);
+/* Animation row layout: labels at the far left, controls at the far
+ * right, with the row's middle as natural empty space. Override the
+ * 92px label column from prop-grid-stacked since animation rows
+ * don't share their row template with the Transform / Anchor
+ * sections — labels here size to their text and sit flush-left. */
+
+.animation-row .prop-row {
+  justify-content: space-between;
 }
 
-.animation-tween-target.active {
-  border-color: var(--accent);
-  background: rgba(255, 119, 85, 0.08);
+.animation-row .prop-row-label,
+.animation-row .pose-binding-target-row .number-field-label,
+.animation-row .prop-grid > .number-field > .number-field-label {
+  width: auto;
+  min-width: 0;
+  /* Zero left padding so the label text starts at the row's left
+   * edge (with only the row's 2px padding between it and the
+   * border). Right padding kept tiny — labels are content-sized
+   * and don't need internal whitespace. */
+  padding: 1px 0;
 }
 
-.animation-tween-target input[type="checkbox"] {
-  margin: 0;
+/* Selects + text inputs in animation prop-rows: content-sized but
+ * with a width range so option text always fits ("Ease in/out" is
+ * the longest), and pinned to the right edge of the row. */
+.animation-row .prop-row-control {
+  flex: 0 0 auto;
+  width: 130px;
 }
 
-.animation-tween-target-label {
-  font-family: ui-monospace, monospace;
-  color: var(--text-dim);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+/* NumberFields in animation rows (Duration + tween targets):
+ * input fixed at 100px on the right, label content-sized on the
+ * left, NumberField itself spans the row so space-between can push
+ * them apart. */
+.animation-row .prop-grid > .number-field,
+.animation-row .pose-binding-target-row .number-field {
+  flex: 1 1 0%;
+  min-width: 0;
+  justify-content: space-between;
 }
 
-.animation-tween-target.active .animation-tween-target-label {
-  color: var(--text);
+.animation-row .number-field input {
+  flex: 0 0 100px;
+  width: 100px;
+  max-width: 100px;
 }
 
 .modifier-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  /* Tight 4px horizontal padding — just enough to keep the type
+   * badge from touching the row's border, but small enough that
+   * the badge reads as left-edge-anchored and the trash as right-
+   * edge-anchored. Combined with `justify-self: end` on the trash
+   * and `width: 100%` on the picker, every modifier type renders
+   * with the same TYPE | …picker… | TRASH layout corner-to-corner. */
+  padding: 6px 4px;
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1538,17 +1916,44 @@ html.transparent-bg #root {
   background: rgba(255, 255, 255, 0.025);
 }
 
-.modifier-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 24px;
-  gap: 6px;
+.modifier-row .modifier-header {
+  /* Flex layout (instead of grid) gives the picker `flex: 1` to grow
+   * into all available space — the trash is then forced to the right
+   * edge as the natural last item, with no chance of the column
+   * collapsing to content size like a 1fr grid track sometimes does
+   * when its content is small. */
+  display: flex;
   align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.modifier-row .modifier-header > select {
+  flex: 1 1 0%;
+  min-width: 0;
+  width: auto;
+}
+
+.modifier-row .modifier-header > .modifier-type-badge {
+  flex-shrink: 0;
+}
+
+.modifier-row .modifier-header > .modifier-delete {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .modifier-type-badge {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  /* Fixed minimum width so PARENT / SPRING / DRAG / SINE badges
+   * line up across rows — without it, the picker column starts at a
+   * different x for each modifier type and the column visually
+   * shimmies. 56px fits the longest label ("PARENT") + padding. */
+  min-width: 56px;
+  text-align: center;
+  flex-shrink: 0;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 3px;
@@ -1576,6 +1981,11 @@ html.transparent-bg #root {
 }
 
 .modifier-row select {
+  /* Fill the 1fr cell so all four modifier types render with the
+   * same picker width — short selects ("X" / "Y") would otherwise
+   * shrink to content and pull the trash icon left, breaking the
+   * "trash always on the far right" rule. */
+  width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1597,6 +2007,10 @@ html.transparent-bg #root {
 }
 
 .modifier-delete {
+  /* justify-self: end pins the icon to the right side of its grid
+   * cell so it sits flush with the row's right edge, no matter
+   * what's in the picker column. */
+  justify-self: end;
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -2364,6 +2778,19 @@ html.transparent-bg #root {
 }
 
 .keyboard-popover {
+  /* Anchored bottom-RIGHT (overriding the shared .settings-popover
+   * default of bottom-left) because the keyboard gear sits in the
+   * right-hand status section. Opening directly above the trigger
+   * means the popover never crosses the user's eye-line on the way
+   * to its content — and matches the muscle-memory pattern of the
+   * mic popover, which also opens above its (left-side) gear.
+   *
+   * `left: auto` is required to neutralize the `left: 12px` the
+   * popover inherits from .settings-popover; without it, both
+   * `left` and `right` would be set and the browser would honor
+   * `left`, snapping the popover back to the left edge. */
+  left: auto;
+  right: 12px;
   width: 520px;
   max-height: calc(100vh - 100px);
   overflow-y: auto;
@@ -3007,6 +3434,13 @@ html.transparent-bg #root {
   display: block;
   width: 100% !important;
   height: 100% !important;
+}
+
+/* Pivot-move mode — crosshair cursor + subtle hint that clicks set
+ * the anchor. The runtime hides every other sprite for the duration. */
+.pixi-host.pivot-move-mode,
+.pixi-host.pivot-move-mode canvas {
+  cursor: crosshair;
 }
 
 /* Drag-and-drop import affordance — appears while files are dragged over. */

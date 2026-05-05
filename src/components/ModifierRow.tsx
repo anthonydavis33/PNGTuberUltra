@@ -11,13 +11,21 @@ import {
   type SpriteId,
 } from "../types/avatar";
 
-const TRANSFORM_TARGETS: { value: ModifierTarget; label: string }[] = [
-  { value: "x", label: "X" },
-  { value: "y", label: "Y" },
-  { value: "rotation", label: "Rotation" },
-  { value: "scaleX", label: "Scale X" },
-  { value: "scaleY", label: "Scale Y" },
-  { value: "alpha", label: "Alpha" },
+// Abbreviated labels — match the transform-binding row's target picker
+// (T = Translate, SC = Scale, Rot/Alp short 3-letter abbrevs) so users
+// see the same shorthand in both places. Full names are exposed via
+// each option's `title` for hover disambiguation.
+const TRANSFORM_TARGETS: {
+  value: ModifierTarget;
+  label: string;
+  title: string;
+}[] = [
+  { value: "x", label: "TX", title: "Translate X (horizontal position offset)" },
+  { value: "y", label: "TY", title: "Translate Y (vertical position offset)" },
+  { value: "rotation", label: "Rot", title: "Rotation (degrees)" },
+  { value: "scaleX", label: "SC X", title: "Scale X (horizontal stretch)" },
+  { value: "scaleY", label: "SC Y", title: "Scale Y (vertical stretch)" },
+  { value: "alpha", label: "Alp", title: "Alpha (opacity)" },
 ];
 
 interface ModifierRowProps {
@@ -91,7 +99,7 @@ export function ModifierRow({
       title="Sprite property this modifier writes to"
     >
       {TRANSFORM_TARGETS.map((t) => (
-        <option key={t.value} value={t.value}>
+        <option key={t.value} value={t.value} title={t.title}>
           {t.label}
         </option>
       ))}
