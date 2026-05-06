@@ -99,6 +99,41 @@ function applyEasing(t: number, easing: AnimationEasing): number {
     case "easeInOut":
       // Smoothstep — ease in and out symmetrically.
       return clamped * clamped * (3 - 2 * clamped);
+    case "easeOutBack": {
+      // Cubic ease-out with overshoot. Crosses 1.0 around t=0.7
+      // (peaks at ~1.1) then settles back. Standard formulation
+      // from Robert Penner's easings; the magic number 1.70158
+      // gives a ~10% overshoot — enough to feel snappy without
+      // looking glitchy. Pairs with oneShot tween mode for a
+      // single satisfying "boing."
+      const c1 = 1.70158;
+      const c3 = c1 + 1;
+      const t1 = clamped - 1;
+      return 1 + c3 * t1 * t1 * t1 + c1 * t1 * t1;
+    }
+    case "easeOutBounce": {
+      // Decaying-amplitude bouncing ball. Three diminishing
+      // bounces over the unit interval, ending exactly at 1.
+      // Verbatim from the Penner / easings.net formulation —
+      // hand-tuned constants for visually pleasing decay; not
+      // worth deriving from physics. Use for sprite "landings,"
+      // a paw plant, or a dropped book settling.
+      const n1 = 7.5625;
+      const d1 = 2.75;
+      let x = clamped;
+      if (x < 1 / d1) {
+        return n1 * x * x;
+      } else if (x < 2 / d1) {
+        x -= 1.5 / d1;
+        return n1 * x * x + 0.75;
+      } else if (x < 2.5 / d1) {
+        x -= 2.25 / d1;
+        return n1 * x * x + 0.9375;
+      } else {
+        x -= 2.625 / d1;
+        return n1 * x * x + 0.984375;
+      }
+    }
   }
 }
 

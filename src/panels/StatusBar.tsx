@@ -56,6 +56,7 @@ import {
   type YoutubeConnectionInfo,
 } from "../inputs/YoutubeChatSource";
 import { getWebhookSource } from "../inputs/WebhookSource";
+import { getWindSource } from "../inputs/WindSource";
 import { useAvatar } from "../store/useAvatar";
 import { useSettings } from "../store/useSettings";
 import { useInputValue } from "../hooks/useInputValue";
@@ -140,6 +141,10 @@ export function StatusBar() {
     // External tools (TikTok bridges, Streamer.bot, custom scripts)
     // POST to http://localhost:47882/webhook/event to drive bindings.
     getWebhookSource();
+    // Wind: synthetic ambient breeze. Self-gates on the windEnabled
+    // setting — the source subscribes to it, only running its RAF
+    // loop while enabled. Construction is cheap.
+    getWindSource();
     // Apply current avatar's autoblink config — turns the source on
     // if the loaded avatar has it enabled, off otherwise. Subsequent
     // config changes route through the model-subscription effect

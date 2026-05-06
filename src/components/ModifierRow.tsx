@@ -138,6 +138,39 @@ export function ModifierRow({
             precision={2}
           />
         </div>
+        {/* Follow override — when set, the spring's target is the
+            followed sprite's world value for this property instead
+            of the modifier-stack target. Pick "—" to disable. The
+            self entry is filtered out (springing to your own world
+            value is a no-op). */}
+        <div className="prop-row">
+          <span
+            className="prop-row-label"
+            title="When set, this Spring chases the followed sprite's world value for the same property — useful for floating-companion sprites that should hover near another sprite with springy lag, without inheriting rotation/scale via Parent."
+          >
+            Follow
+          </span>
+          <select
+            className="prop-row-control"
+            value={modifier.followSpriteId ?? ""}
+            onChange={(e) =>
+              onChange({
+                followSpriteId:
+                  e.target.value === "" ? undefined : e.target.value,
+              })
+            }
+            title="Optional: follow another sprite's world value for this property"
+          >
+            <option value="">— None (use stack target) —</option>
+            {parentChoices
+              .filter((s) => s.id !== currentSpriteId)
+              .map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+          </select>
+        </div>
       </li>
     );
   }

@@ -181,10 +181,34 @@ export class ModifierRunner {
       if (mod.type === "parent") {
         result = this.applyParent(mod, result, allSprites, dt, time);
       } else if (mod.type === "spring") {
+        // Follow override: when followSpriteId is set and resolves
+        // to a real (non-self) sprite, take the spring's target
+        // from the followed sprite's WORLD value of the same
+        // property. Cycles are already protected by the runner's
+        // visiting set — if A follows B and B follows A, evaluate
+        // breaks the cycle and warns.
+        let target = this.readProperty(result, mod.property);
+        if (
+          mod.followSpriteId &&
+          mod.followSpriteId !== sprite.id
+        ) {
+          const followed = allSprites.find(
+            (s) => s.id === mod.followSpriteId,
+          );
+          if (followed) {
+            const followedWorld = this.evaluate(
+              followed,
+              allSprites,
+              dt,
+              time,
+            );
+            target = followedWorld[mod.property];
+          }
+        }
         result = this.writeProperty(
           result,
           mod.property,
-          this.applySpring(mod, this.readProperty(result, mod.property), dt),
+          this.applySpring(mod, target, dt),
         );
       } else if (mod.type === "drag") {
         result = this.writeProperty(

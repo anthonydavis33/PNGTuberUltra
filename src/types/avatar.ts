@@ -471,6 +471,19 @@ export interface ParentModifier {
  * Bounce/jiggle for hair, ears, tails, jewelry.
  *   stiffness 0..1 — higher = snappier
  *   damping   0..1 — higher = less overshoot
+ *
+ * Optional `followSpriteId` overrides the target. When set, the
+ * spring chases the FOLLOWED sprite's world `property` value
+ * instead of the modifier-stack target on this sprite. Use case:
+ * a floating heart sprite that hovers near the head with springy
+ * lag. Without follow, you'd have to add a Parent modifier (which
+ * also inherits rotation/scale you may not want) and a Spring on
+ * top. Follow gives just the position-spring without parent
+ * inheritance.
+ *
+ * Self-reference is silently ignored (no-op, just smooths against
+ * itself which would be useless). Reference to a missing sprite
+ * is also a no-op — falls back to the normal target.
  */
 export interface SpringModifier {
   id: string;
@@ -478,6 +491,7 @@ export interface SpringModifier {
   property: ModifierTarget;
   stiffness: number;
   damping: number;
+  followSpriteId?: SpriteId;
 }
 
 /**
@@ -588,7 +602,26 @@ export type AnimationMode =
 //   Use for "hold key → bring paw down, release → return."
 
 /** Built-in easing curves. Pure functions (number→number) over [0, 1]. */
-export type AnimationEasing = "linear" | "easeIn" | "easeOut" | "easeInOut";
+/**
+ * Easing curve picked by an Animation. The first four are smooth
+ * sigmoid-family curves; the last two add overshoot/bounce for that
+ * physical-feeling "land" / "squash" finish — pair with a oneShot
+ * tween that scales the sprite at peak (e.g. scaleX +0.3, scaleY
+ * -0.3) for a satisfying squash-and-stretch impulse.
+ *
+ *   easeOutBack   — overshoots its target then settles. Snappy
+ *                   "boing" feel; great on click-pop animations.
+ *   easeOutBounce — multiple decaying overshoots like a ball
+ *                   bouncing on a floor. Use sparingly — looks
+ *                   silly in excess but perfect for landings.
+ */
+export type AnimationEasing =
+  | "linear"
+  | "easeIn"
+  | "easeOut"
+  | "easeInOut"
+  | "easeOutBack"
+  | "easeOutBounce";
 
 export interface Animation {
   id: string;

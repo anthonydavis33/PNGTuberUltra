@@ -118,8 +118,49 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
 
       <StreamingSection />
       <StreamingIntegrationsSection />
+      <AmbientPhysicsSection />
       <PrivacySection />
     </div>
+  );
+}
+
+/** Synthetic ambient input sources — currently just Wind. Off by
+ *  default; users opt in once they want hair / chains / capes to
+ *  drift in an ambient breeze. */
+function AmbientPhysicsSection() {
+  const windEnabled = useSettings((s) => s.windEnabled);
+  const setWindEnabled = useSettings((s) => s.setWindEnabled);
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">Ambient physics</div>
+      <div className="settings-section-desc">
+        Synthetic input sources that drive ambient motion without
+        any real-world signal. Bind their channels to chain anchors,
+        hair-tuft rotation, cape sway, etc.
+      </div>
+
+      <label
+        className={`settings-radio ${windEnabled ? "active" : ""}`}
+        title="Publishes a smoothly-varying value in [-1, +1] to the Wind / WindY channels. Naturally non-repeating (layered sines + a slow gust envelope). Bind it as a pose driver on a chain link's anchor offset for ambient sway, or as a transform binding's input on a hair-tuft's rotation. WindActive is a boolean gate for visibility bindings."
+      >
+        <input
+          type="checkbox"
+          checked={windEnabled}
+          onChange={(e) => setWindEnabled(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">Wind</div>
+          <div className="settings-radio-hint">
+            Adds <code>Wind</code>, <code>WindY</code>, and{" "}
+            <code>WindActive</code> channels. Pair with a Spring or
+            Drag modifier downstream if the raw signal feels too
+            direct, or layer a chain with a velocityCoupling of 0
+            so the wind is the chain's only forcing input.
+          </div>
+        </div>
+      </label>
+    </section>
   );
 }
 

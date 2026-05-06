@@ -33,6 +33,19 @@ import {
 import { getMidiSource } from "../inputs/MidiSource";
 import { HEART_RATE_CHANNELS } from "../inputs/HeartRateSource";
 import { TWITCH_CHANNELS } from "../inputs/TwitchChatSource";
+import { WIND_CHANNELS } from "../inputs/WindSource";
+
+/** Synthetic ambient wind. Wind / WindY are continuous; WindActive
+ *  is a boolean gate. Show only when the user has enabled wind in
+ *  settings — otherwise the channels publish null and would just
+ *  be noise in the picker. We DO show the channels when the user
+ *  has wind off but hasn't yet realized what the channels are for;
+ *  picking one binds nothing useful until they enable wind. Honest
+ *  trade-off: discoverability vs. clutter. We pick discoverability
+ *  here since the channels are clearly named. */
+const WIND_CONTINUOUS = ["Wind", "WindY"] as const;
+const WIND_BOOLEAN = ["WindActive"] as const;
+void WIND_CHANNELS;
 import { TWITCH_EVENTSUB_CHANNELS } from "../inputs/TwitchEventSubSource";
 import { YOUTUBE_CHANNELS } from "../inputs/YoutubeChatSource";
 import {
@@ -261,6 +274,8 @@ export function getKnownChannels(
       // value would force the user to pick an exact number, which is
       // never the intent. Use a transform binding to gate on ranges.
       ...HEART_RATE_BOOLEAN,
+      // Wind active gate — show overlay only when ambient wind is on.
+      ...WIND_BOOLEAN,
       // Twitch: discrete event channels are first-class visibility
       // inputs. "Show on TwitchChatCommand=hype" maps !hype to a
       // sprite. TwitchChatActive gates "show this overlay only when
@@ -305,6 +320,11 @@ export function getKnownChannels(
       // PNGTuberUltra-only feature.
       ...HEART_RATE_CONTINUOUS,
       ...HEART_RATE_BOOLEAN,
+      // Synthetic ambient wind — the canonical use case is binding
+      // it as a pose driver on a chain link's anchor offset or a
+      // hair-tuft's rotation for ambient sway.
+      ...WIND_CONTINUOUS,
+      ...WIND_BOOLEAN,
       // TwitchBits is a perfect pose driver via Spring modifier —
       // big cheers throw the avatar back, small cheers nudge it.
       ...TWITCH_CONTINUOUS,
@@ -330,6 +350,7 @@ export function getKnownChannels(
       ...MIDI_CONTINUOUS_BASE,
       ...midi.continuous,
       ...HEART_RATE_CONTINUOUS,
+      ...WIND_CONTINUOUS,
       ...TWITCH_CONTINUOUS,
       ...TWITCH_EVENTSUB_CONTINUOUS,
       ...YOUTUBE_CONTINUOUS,
@@ -354,6 +375,7 @@ export function getKnownChannels(
       ...MIDI_BOOLEAN_BASE,
       ...midi.boolean,
       ...HEART_RATE_BOOLEAN,
+      ...WIND_BOOLEAN,
       ...TWITCH_DISCRETE,
       ...TWITCH_BOOLEAN,
       ...TWITCH_EVENTSUB_DISCRETE,
@@ -443,6 +465,7 @@ export function getValuesForChannel(
     // the default branch below catches them by name prefix.
     case "MidiNoteOn":
     case "HeartRateActive":
+    case "WindActive":
     case "TwitchChatActive":
     case "TwitchEventSubActive":
     case "YoutubeChatActive":

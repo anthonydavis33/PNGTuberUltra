@@ -137,6 +137,14 @@ interface SettingsState {
   setShowYoutubePanel: (enabled: boolean) => void;
   showWebhookPanel: boolean;
   setShowWebhookPanel: (enabled: boolean) => void;
+  /** Synthetic ambient wind. When on, the WindSource publishes a
+   *  smoothly-varying value to the `Wind` and `WindY` channels for
+   *  bindings to drive hair / chains / capes. Off by default — a
+   *  fresh install showing things gently moving with no input
+   *  source enabled is more confusing than helpful, so users opt
+   *  in once they want it. */
+  windEnabled: boolean;
+  setWindEnabled: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -179,6 +187,8 @@ export const useSettings = create<SettingsState>()(
       setShowYoutubePanel: (enabled) => set({ showYoutubePanel: enabled }),
       showWebhookPanel: false,
       setShowWebhookPanel: (enabled) => set({ showWebhookPanel: enabled }),
+      windEnabled: false,
+      setWindEnabled: (enabled) => set({ windEnabled: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

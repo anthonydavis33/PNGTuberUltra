@@ -41,11 +41,21 @@ const MODE_OPTIONS: { value: AnimationMode; label: string; hint: string }[] = [
   },
 ];
 
-const EASING_OPTIONS: { value: AnimationEasing; label: string }[] = [
+const EASING_OPTIONS: { value: AnimationEasing; label: string; hint?: string }[] = [
   { value: "linear", label: "Linear" },
   { value: "easeIn", label: "Ease in" },
   { value: "easeOut", label: "Ease out" },
   { value: "easeInOut", label: "Ease in/out" },
+  {
+    value: "easeOutBack",
+    label: "Out Back (overshoot)",
+    hint: "Overshoots its target by ~10% then settles. Great for click-pop / squash impulses — pair with a oneShot tween that briefly scales the sprite.",
+  },
+  {
+    value: "easeOutBounce",
+    label: "Out Bounce",
+    hint: "Three decaying bounces. Use for landings or impacts — overuse looks cartoonish.",
+  },
 ];
 
 const TRIGGER_KIND_OPTIONS: {
@@ -333,7 +343,7 @@ export function AnimationRow({
                 title="Curve applied to time → progress mapping"
               >
                 {EASING_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
+                  <option key={o.value} value={o.value} title={o.hint}>
                     {o.label}
                   </option>
                 ))}
