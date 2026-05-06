@@ -10,8 +10,31 @@
 import { Assets, Texture } from "pixi.js";
 import type { AssetEntry } from "../types/avatar";
 
-let nextAssetNum = 1;
-const genAssetId = (): string => `asset-${nextAssetNum++}`;
+/**
+ * Generate a fresh asset ID for newly-imported files (drag-drop /
+ * Add Sprite). UUID-based so we can never collide with an existing
+ * asset already in the avatar — which was a real bug previously:
+ *
+ * The old implementation used a module-level counter starting at 1,
+ * so loading a `.pnxr` (which restores asset IDs verbatim from the
+ * saved file: asset-1, asset-2, asset-N) and then dropping a new
+ * file would produce another `asset-1`, overwriting `Assets.cache`
+ * AND `assets[id]` in the store. Existing sprites pointing at the
+ * collided ID picked up the new texture's metadata (different
+ * width/height/visibleBounds) — which threw mesh layout math, made
+ * sprite-sheet frame math go out of bounds, and in the worst case
+ * canvas rendered as a black void with no recoverable state.
+ *
+ * The 8-char UUID slice is long enough to make accidental collisions
+ * astronomically unlikely (4 billion possibilities; would need ~65k
+ * assets in one avatar to hit a 50/50 birthday collision) while
+ * staying readable in saved `.pnxr` files for debugging. Pattern
+ * matches the existing animation / pose binding ID convention.
+ *
+ * `loadBytesAsAsset` (used by .pnxr load + sample rig) is unaffected
+ * — it takes an explicit ID arg.
+ */
+const genAssetId = (): string => `asset-${crypto.randomUUID().slice(0, 8)}`;
 
 const SUPPORTED_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
 
