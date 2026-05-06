@@ -361,6 +361,28 @@ html.transparent-bg #root {
   white-space: nowrap;
 }
 
+/* Inline-rename input replaces the .layer-name span while editing.
+ * Borrows .layer-name's flex/overflow constraints + matches the
+ * panel-text styling so the field doesn't visually jump when the
+ * span swaps to an input. The blue accent border on focus signals
+ * "you're typing" without otherwise changing the row's layout. */
+.layer-name-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  padding: 1px 4px;
+  margin: 0;
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.layer-name-input:focus {
+  outline: none;
+}
+
 /* Hidden layer: dim the row + name so the user reads "this isn't
  * rendering" at a glance. The visibility button itself stays at full
  * opacity so the toggle remains clearly clickable. */
@@ -408,7 +430,8 @@ html.transparent-bg #root {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-.layer-delete {
+.layer-delete,
+.layer-duplicate {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -428,13 +451,28 @@ html.transparent-bg #root {
 }
 
 .panel li:hover .layer-delete,
-.panel li.selected .layer-delete {
+.panel li.selected .layer-delete,
+.panel li:hover .layer-duplicate,
+.panel li.selected .layer-duplicate {
   opacity: 1;
 }
 
 .layer-delete:hover {
   color: #fff;
   background: var(--danger);
+}
+
+/* Duplicate button uses the accent color rather than danger — it's
+ * a constructive action, not destructive. Same hover-tint pattern
+ * as the rest of the toolbar buttons. */
+.layer-duplicate:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.layer-duplicate:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .layer-delete:focus-visible {

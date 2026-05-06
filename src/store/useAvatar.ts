@@ -137,6 +137,23 @@ interface AvatarStore {
     patch: Partial<ChainConfig> | undefined,
   ) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
+  /** Rename a sprite. Empty / whitespace-only names are silently
+   *  rejected — the layer tree relies on a non-empty label for
+   *  hover, drag, and binding-picker entries. */
+  setSpriteName: (id: SpriteId, name: string) => void;
+  /** Deep-copy a sprite as a new layer immediately above the source
+   *  (model array index = sourceIndex + 1, so it renders one z-tier
+   *  higher). Bindings / modifiers / animations get fresh ids so
+   *  edits to one don't leak into the other. The chain config (if
+   *  any) is intentionally dropped — having two anchors drive the
+   *  same followers would race their override writes. The duplicate
+   *  starts unselected; caller selects it explicitly if they want
+   *  the new layer focused.
+   *
+   *  Returns the new sprite's id, or null if the source doesn't
+   *  exist (treated as a no-op rather than an error so UI handlers
+   *  don't have to guard). */
+  duplicateSprite: (id: SpriteId) => SpriteId | null;
   removeSprite: (id: SpriteId) => void;
   /** Reorder a sprite within the model array (which is render z-order:
    *  earlier index = drawn first / lower z). */
@@ -442,6 +459,93 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
       selectedId: id,
     }));
     return id;
+  },
+
+  setSpriteName: (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return; // empty names rejected — see jsdoc
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) =>
+          s.id === id ? { ...s, name: trimmed } : s,
+        ),
+      },
+    }));
+  },
+
+  duplicateSprite: (id) => {
+    const state = get();
+    const sourceIdx = state.model.sprites.findIndex((s) => s.id === id);
+    if (sourceIdx < 0) return null;
+    const source = state.model.sprites[sourceIdx]!;
+    const newId = genId();
+
+    // Deep-copy with fresh ids for child objects that have their own
+    // ids. References to OTHER sprites (modifier.parentSpriteId,
+    // modifier.followSpriteId, sprite.clipBy) are preserved by id —
+    // the duplicate inherits the same parent / follow / clip targets,
+    // which is what users expect from "make me another one of these."
+    const dup: Sprite = {
+      ...source,
+      id: newId,
+      // Append " copy" once; if the user duplicates again later they
+      // can rename to keep the tree readable. We don't try to be
+      // clever ("Hair copy 2", "Hair copy 3") — manual rename is
+      // cleaner than reading minds.
+      name: `${source.name} copy`,
+      // Fresh transform reference so future edits don't share with the
+      // source's nested objects (Object.assign-shallow would share
+      // them otherwise). Same for anchor.
+      transform: { ...source.transform },
+      anchor: { ...source.anchor },
+      // Bindings: each gets a fresh id so edits to either sprite's
+      // bindings don't propagate. The Binding union has multiple
+      // shapes; spread + new id covers all of them since `id` is
+      // the only common field that needs to differ.
+      bindings: source.bindings.map((b) => ({
+        ...b,
+        id: `b-${crypto.randomUUID().slice(0, 8)}`,
+      })),
+      modifiers: source.modifiers.map((m) => ({
+        ...m,
+        id: `m-${crypto.randomUUID().slice(0, 8)}`,
+      })),
+      animations: source.animations?.map((a) => ({
+        ...a,
+        id: `a-${crypto.randomUUID().slice(0, 8)}`,
+      })),
+      // sheet / cornerOffsets are nested objects — shallow-clone so
+      // future edits to one don't mutate the other. cornerOffsets has
+      // 4 nested points; clone each.
+      sheet: source.sheet ? { ...source.sheet } : undefined,
+      cornerOffsets: source.cornerOffsets
+        ? {
+            tl: { ...source.cornerOffsets.tl },
+            tr: { ...source.cornerOffsets.tr },
+            bl: { ...source.cornerOffsets.bl },
+            br: { ...source.cornerOffsets.br },
+          }
+        : undefined,
+      // Chain is intentionally DROPPED on the duplicate. If we kept
+      // it, two anchors would drive the same followers and race each
+      // other's chain-override writes (last-writer-wins). User can
+      // re-enable on the duplicate if they want a parallel chain
+      // pointing at different followers.
+      chain: undefined,
+    };
+
+    // Insert at sourceIdx + 1 — duplicate stacks one tier ABOVE the
+    // source in render order. Matches Photoshop's Cmd+J behavior;
+    // intuitive when duplicating "for variation" (the duplicate
+    // covers the original until repositioned).
+    const newSprites = [...state.model.sprites];
+    newSprites.splice(sourceIdx + 1, 0, dup);
+    set({
+      model: { ...state.model, sprites: newSprites },
+      selectedId: newId,
+    });
+    return newId;
   },
 
   removeSprite: (id) => {

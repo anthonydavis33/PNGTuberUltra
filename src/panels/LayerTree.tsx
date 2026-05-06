@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { Eye, EyeOff, GripVertical, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Copy, Eye, EyeOff, GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -27,7 +27,9 @@ interface SortableLayerItemProps {
   isSelected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
   onToggleVisible: () => void;
+  onRename: (name: string) => void;
 }
 
 function SortableLayerItem({
@@ -35,7 +37,9 @@ function SortableLayerItem({
   isSelected,
   onSelect,
   onDelete,
+  onDuplicate,
   onToggleVisible,
+  onRename,
 }: SortableLayerItemProps) {
   const {
     attributes,
@@ -45,6 +49,51 @@ function SortableLayerItem({
     transition,
     isDragging,
   } = useSortable({ id: sprite.id });
+
+  // Inline-rename state. While editing, the layer name swaps to a
+  // text input that auto-selects on focus, commits on Enter / blur,
+  // cancels on Escape. We DON'T spread the dnd listeners onto the
+  // input itself (would let dragging the cursor through the field
+  // trigger a sort) — handled below by gating attribute spread on
+  // !isEditing.
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftName, setDraftName] = useState(sprite.name);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reset draft when the sprite's external name changes (e.g. via
+  // undo) so the next double-click starts from the current value
+  // instead of a stale draft.
+  useEffect(() => {
+    if (!isEditing) setDraftName(sprite.name);
+  }, [sprite.name, isEditing]);
+
+  // Auto-select-all on first render of the input so the user can
+  // immediately start typing to replace the existing name.
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const startEdit = (): void => {
+    setDraftName(sprite.name);
+    setIsEditing(true);
+  };
+  const commitEdit = (): void => {
+    const trimmed = draftName.trim();
+    // Empty / whitespace-only names: revert to the original. The
+    // store also rejects them defensively — both layers protect
+    // against an empty-string sprite name surfacing in pickers.
+    if (trimmed && trimmed !== sprite.name) {
+      onRename(trimmed);
+    }
+    setIsEditing(false);
+  };
+  const cancelEdit = (): void => {
+    setDraftName(sprite.name);
+    setIsEditing(false);
+  };
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -59,6 +108,7 @@ function SortableLayerItem({
   const className = [
     isSelected ? "selected" : "",
     !sprite.visible ? "hidden-layer" : "",
+    isEditing ? "editing-name" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -68,9 +118,14 @@ function SortableLayerItem({
       ref={setNodeRef}
       style={style}
       className={className}
-      onClick={onSelect}
-      {...attributes}
-      {...listeners}
+      onClick={() => {
+        if (!isEditing) onSelect();
+      }}
+      // Disable dnd attributes/listeners while editing the name so
+      // dragging the cursor inside the input doesn't trigger a
+      // sort. The whole row drag affordance reactivates on commit.
+      {...(isEditing ? {} : attributes)}
+      {...(isEditing ? {} : listeners)}
     >
       {/* Drag-handle indicator: only the visual cue. The whole row is
        *  still draggable (listeners spread above), so this is just an
@@ -84,7 +139,43 @@ function SortableLayerItem({
         <GripVertical size={12} />
       </span>
 
-      <span className="layer-name">{sprite.name}</span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          className="layer-name-input"
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitEdit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEdit();
+            }
+            // Stop key events from bubbling to the global keyboard
+            // shortcut handler — Delete / Backspace would otherwise
+            // try to remove the sprite while we're typing them into
+            // the rename field.
+            e.stopPropagation();
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-label={`Rename ${sprite.name}`}
+        />
+      ) : (
+        <span
+          className="layer-name"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            startEdit();
+          }}
+          title="Double-click to rename"
+        >
+          {sprite.name}
+        </span>
+      )}
 
       <button
         className="layer-visibility"
@@ -104,6 +195,19 @@ function SortableLayerItem({
         aria-pressed={!sprite.visible}
       >
         {sprite.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+      </button>
+
+      <button
+        className="layer-duplicate"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDuplicate();
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        title="Duplicate sprite (deep-copy with fresh binding/modifier ids; chain config dropped). New sprite stacks one z-tier above this one."
+        aria-label={`Duplicate ${sprite.name}`}
+      >
+        <Copy size={14} strokeWidth={2} />
       </button>
 
       <button
@@ -131,6 +235,8 @@ export function LayerTree() {
   const removeSprite = useAvatar((s) => s.removeSprite);
   const reorderSprites = useAvatar((s) => s.reorderSprites);
   const setSpriteVisible = useAvatar((s) => s.setSpriteVisible);
+  const setSpriteName = useAvatar((s) => s.setSpriteName);
+  const duplicateSprite = useAvatar((s) => s.duplicateSprite);
   const registerAsset = useAvatar((s) => s.registerAsset);
   const addSprite = useAvatar((s) => s.addSprite);
 
@@ -244,9 +350,11 @@ export function LayerTree() {
                   isSelected={s.id === selectedId}
                   onSelect={() => selectSprite(s.id)}
                   onDelete={() => removeSprite(s.id)}
+                  onDuplicate={() => duplicateSprite(s.id)}
                   onToggleVisible={() =>
                     setSpriteVisible(s.id, !s.visible)
                   }
+                  onRename={(name) => setSpriteName(s.id, name)}
                 />
               ))}
             </ul>
