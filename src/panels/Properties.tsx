@@ -596,9 +596,51 @@ export function Properties() {
           ) : (
             <button
               className="tool-btn"
-              onClick={() =>
-                setSpriteRibbon(sprite.id, { ...DEFAULT_RIBBON_CONFIG })
-              }
+              onClick={() => {
+                // Compute an initial ribbon config that visually
+                // matches the sprite's CURRENT rendered shape — total
+                // length and width derived from the sprite's actual
+                // texture (or sheet frame) dimensions, anchorOffset
+                // shifted so the ribbon's TOP lines up with the
+                // texture's top edge instead of the sprite's center.
+                //
+                // Without this, defaults (8 × 25 = 200px length, 100px
+                // fallback width when no asset) would shrink the
+                // sprite to ~100px wide and stretch it ~200px tall,
+                // hanging entirely BELOW the original pivot — a
+                // disorienting "where did my sprite go?" jump on
+                // enable. With this, the ribbon at rest occupies the
+                // same rectangle as the original sprite.
+                const frame = computeFrameSize(sprite, assets);
+                const segments = DEFAULT_RIBBON_CONFIG.segments;
+                setSpriteRibbon(sprite.id, {
+                  ...DEFAULT_RIBBON_CONFIG,
+                  segments,
+                  // segmentLength × segments ≈ texture/frame height,
+                  // so total ribbon length matches what the sprite
+                  // was rendering before.
+                  segmentLength: Math.max(
+                    1,
+                    Math.round(frame.h / segments),
+                  ),
+                  // Width auto-derives at render time when the sprite
+                  // has an asset (so we leave it undefined). For
+                  // placeholder sprites with no asset, the renderer's
+                  // 100px fallback would mismatch the placeholder's
+                  // 120px width — set explicitly so the placeholder
+                  // case looks right too.
+                  width: sprite.asset ? undefined : frame.w,
+                  // Position the ribbon anchor at the texture's TOP
+                  // (not the sprite's pivot). For sprite.anchor.y =
+                  // 0.5 (centered), texture top is at local y =
+                  // -frame.h/2, so anchorOffset.y = -frame.h * 0.5.
+                  // Generalizes to any anchor position.
+                  anchorOffset: {
+                    x: (0.5 - sprite.anchor.x) * frame.w,
+                    y: -sprite.anchor.y * frame.h,
+                  },
+                });
+              }}
               title={
                 sprite.cornerOffsets
                   ? "Enable ribbon — will replace the 4-corner mesh on this sprite"
