@@ -36,7 +36,29 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-Produces a native installer for the host OS in `src-tauri/target/release/bundle/`.
+Produces a native installer for the host OS in `src-tauri/target/release/bundle/`:
+
+- **Windows:** `.msi` (Windows Installer) and `.exe` (NSIS installer) under `bundle/msi/` and `bundle/nsis/`.
+- **macOS:** `.dmg` and `.app` under `bundle/dmg/` and `bundle/macos/`.
+- **Linux:** `.deb`, `.rpm`, `.AppImage` under their respective subfolders.
+
+Each platform builds only on its native host — Tauri can't cross-compile webview-bound binaries. Use the GitHub Actions release workflow (below) to produce all three from any one machine.
+
+## Release
+
+The repo includes a multi-platform release workflow at `.github/workflows/release.yml`. Pushing a `v*` tag triggers a build for Windows, macOS (Apple Silicon + Intel), and Linux, and creates a draft GitHub Release with the installers attached.
+
+```sh
+# Bump version in src-tauri/tauri.conf.json + package.json first.
+git tag v0.2.0
+git push --tags
+```
+
+Then check the [Actions tab](../../actions) — the build takes ~15-25 min across all four runners. When it finishes, the [Releases page](../../releases) has a draft with download links for every platform; edit the release notes and publish.
+
+You can also trigger the workflow manually via the Actions tab → "Release" → "Run workflow" — useful for dry-running the build pipeline without committing a tag.
+
+**A note on signing:** binaries are currently unsigned. Windows SmartScreen and macOS Gatekeeper will flag them as unrecognized; users have to click "More info → Run anyway" (Windows) or right-click → Open → Open (macOS). Code signing requires a paid Authenticode cert ($100-400/yr) on Windows and an Apple Developer account ($99/yr) on macOS. Worth doing once there are users complaining; not worth pre-launch.
 
 ## Contributing
 

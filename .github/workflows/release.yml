@@ -1,0 +1,148 @@
+# Multi-platform release workflow.
+#
+# Triggers:
+#   - On every `v*` tag push (e.g. `git tag v0.2.0 && git push --tags`)
+#   - Manually via the Actions tab (workflow_dispatch) for dry-runs
+#
+# Builds PNGTuberUltra for Windows, macOS (Apple Silicon + Intel),
+# and Linux, attaches the installers to a GitHub Release as a draft
+# (so the maintainer can write release notes before publishing).
+#
+# Outputs per platform:
+#   Windows: .msi (Windows Installer) + .exe (NSIS) installers
+#   macOS:   .dmg (and .app inside it). Two builds — Apple Silicon
+#            (aarch64) and Intel (x86_64) — separate .dmg files
+#            rather than a Universal binary, since the build matrix
+#            is simpler this way and macOS-on-Steam usage is minor.
+#   Linux:   .deb, .rpm, .AppImage
+#
+# Why a release workflow and not a CI-on-PR workflow?
+#   PR builds duplicate work — the same code that landed builds
+#   again on tag push. Releases happen on intentional tag pushes;
+#   a release-only workflow is the right scope. If we ever want
+#   "smoke-test the build on every PR," that's a separate workflow
+#   that runs `pnpm tauri build --debug` without releasing. Out of
+#   scope for v1.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Manual trigger button in the Actions tab — useful for dry-running
+  # the build pipeline without committing a tag.
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      # Needed for tauri-action to create the GitHub Release and
+      # attach assets. Default GITHUB_TOKEN scope is read-only.
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon (M-series) — separate build because Rust
+          # cross-compiles natively now, no QEMU needed.
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          # Intel Mac. Still has nontrivial install base; cheaper to
+          # build a second .dmg than to produce a Universal binary
+          # (Universal doubles binary size; many users don't need it).
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+          # ubuntu-22.04 chosen over ubuntu-latest deliberately:
+          # AppImage builds against a base distro's libc, and
+          # 22.04's older glibc means the AppImage runs on a wider
+          # range of Linux distros. ubuntu-24.04 would lock out
+          # users on slightly older systems.
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # On macOS we need both targets in the toolchain so the
+          # cross-arch builds work. On other platforms targets stays
+          # empty (uses the host triple).
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      # Linux build deps for Tauri 2 + rdev (global keyboard/mouse
+      # hook). libxdo is the magic piece for rdev — without it,
+      # GlobalKeyboardSource / GlobalMouseSource won't work.
+      # libwebkit2gtk-4.1 is Tauri 2's webview (4.0 was Tauri 1).
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The actual build + release step. tauri-action invokes
+      # `pnpm tauri build` under the hood, then uploads each
+      # produced installer as a release asset.
+      #
+      # releaseDraft: true gives the maintainer a chance to write
+      # release notes / verify each platform's binary opens before
+      # publishing. To skip the draft step and publish immediately,
+      # flip to false.
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "PNGTuberUltra ${{ github.ref_name }}"
+          releaseBody: |
+            ## PNGTuberUltra ${{ github.ref_name }}
+
+            **Downloads:**
+            - Windows: `.msi` or `.exe` from the assets below
+            - macOS: `.dmg` (separate builds for Apple Silicon `aarch64` and Intel `x86_64`)
+            - Linux: `.deb`, `.rpm`, or `.AppImage`
+
+            **Note on Windows / macOS warnings:** binaries are
+            currently unsigned, so SmartScreen on Windows and
+            Gatekeeper on macOS may flag them as unrecognized.
+            On Windows: click "More info" → "Run anyway." On macOS:
+            right-click → Open → Open. Code signing is on the
+            roadmap; until then this is the intentional friction.
+
+            ---
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
