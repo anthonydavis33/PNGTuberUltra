@@ -29,14 +29,17 @@ import {
 } from "../bindings/evaluate";
 import {
   DEFAULT_CHAIN_CONFIG,
+  DEFAULT_RIBBON_CONFIG,
   DEFAULT_SPRITE_SHEET,
   DEFAULT_TRANSFORM,
   type Anchor,
   type Animation,
+  type AssetEntry,
   type ChainConfig,
   type Modifier,
   type ModifierType,
   type PoseBinding,
+  type RibbonConfig,
   type Sprite,
   type SpriteId,
   type SpriteSheet,
@@ -113,6 +116,7 @@ export function Properties() {
   const setSpriteSheet = useAvatar((s) => s.setSpriteSheet);
   const setSpriteClipBy = useAvatar((s) => s.setSpriteClipBy);
   const setSpriteChain = useAvatar((s) => s.setSpriteChain);
+  const setSpriteRibbon = useAvatar((s) => s.setSpriteRibbon);
   const addBinding = useAvatar((s) => s.addBinding);
   const removeBinding = useAvatar((s) => s.removeBinding);
   const updateBinding = useAvatar((s) => s.updateBinding);
@@ -573,6 +577,56 @@ export function Properties() {
             sprites to form the chain links. Each frame the chain
             simulates with gravity, damping, and velocity coupling
             from the anchor's motion.
+          </p>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="ribbon"
+        title="Ribbon physics"
+        actions={
+          sprite.ribbon ? (
+            <button
+              className="tool-btn"
+              onClick={() => setSpriteRibbon(sprite.id, undefined)}
+              title="Disable ribbon physics on this sprite"
+            >
+              Disable
+            </button>
+          ) : (
+            <button
+              className="tool-btn"
+              onClick={() =>
+                setSpriteRibbon(sprite.id, { ...DEFAULT_RIBBON_CONFIG })
+              }
+              title={
+                sprite.cornerOffsets
+                  ? "Enable ribbon — will replace the 4-corner mesh on this sprite"
+                  : "Enable ribbon — turns this sprite into a deformable strip with verlet physics"
+              }
+            >
+              <Plus size={12} />
+              Enable
+            </button>
+          )
+        }
+      >
+        {sprite.ribbon ? (
+          <RibbonConfigEditor
+            ribbon={sprite.ribbon}
+            sprite={sprite}
+            assets={assets}
+            onChange={(patch) => setSpriteRibbon(sprite.id, patch)}
+          />
+        ) : (
+          <p className="empty">
+            Off — sprite renders as a regular image. Click{" "}
+            <strong>Enable</strong> to turn it into a flowing ribbon
+            (single texture deformed by verlet physics — hair
+            strands, tails, capes, banners). Draw the texture with
+            the attachment point at the TOP of the image; the
+            bottom physically swings. Mutually exclusive with
+            4-corner mesh deformation.
           </p>
         )}
       </CollapsibleSection>
@@ -1074,6 +1128,190 @@ function ChainConfigEditor({
           </label>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Ribbon editor
+
+/**
+ * Sub-panel rendered inside the Properties → Ribbon physics section
+ * when a ribbon is enabled. Shows segments, segment length, gravity,
+ * damping, velocity coupling, anchor offset, optional width
+ * override, and a hint about the texture orientation convention.
+ *
+ * Width override: undefined (auto) defaults to the asset's pixel
+ * width — natural for users who drew the strand at the desired
+ * size. The "Override" toggle reveals a NumberField for explicit
+ * pixel control. Switching the toggle off restores `undefined`.
+ *
+ * Pose-corner-binding warning: if any pose binding on this sprite
+ * has non-empty poseCornerOffsets, those won't deform the ribbon
+ * (ribbon mesh ignores corner offsets — it has its own segmented
+ * geometry). Surface this so users don't quietly lose their
+ * pose-corner work.
+ */
+function RibbonConfigEditor({
+  ribbon,
+  sprite,
+  assets,
+  onChange,
+}: {
+  ribbon: RibbonConfig;
+  sprite: Sprite;
+  assets: Record<string, AssetEntry>;
+  onChange: (patch: Partial<RibbonConfig>) => void;
+}) {
+  const asset = sprite.asset ? assets[sprite.asset] : undefined;
+  const autoWidth = asset?.width ?? null;
+  const widthIsAuto = ribbon.width === undefined;
+
+  // Detect pose-corner bindings — these would normally promote the
+  // sprite to 4-corner mesh. Ribbon overrides that path; warn so
+  // users don't lose their work.
+  const hasPoseCorners = sprite.bindings.some(
+    (b) =>
+      b.target === "pose" &&
+      b.poseCornerOffsets &&
+      Object.keys(b.poseCornerOffsets).length > 0,
+  );
+
+  return (
+    <div className="chain-editor">
+      {hasPoseCorners && (
+        <p
+          className="empty"
+          style={{
+            color: "var(--text-dim)",
+            borderLeft: "2px solid var(--accent)",
+            paddingLeft: 8,
+            margin: "0 0 4px 0",
+          }}
+        >
+          Pose bindings on this sprite have corner offsets — ribbon
+          rendering ignores those. Disable ribbon to restore 4-corner
+          mesh deformation, or remove the corner offsets if they're
+          unused.
+        </p>
+      )}
+      <div className="prop-grid prop-grid-stacked">
+        <NumberField
+          label="Segments"
+          value={ribbon.segments}
+          onChange={(v) =>
+            onChange({ segments: Math.max(1, Math.min(32, Math.round(v))) })
+          }
+          step={1}
+          precision={0}
+        />
+        <NumberField
+          label="Segment len"
+          value={ribbon.segmentLength}
+          onChange={(v) => onChange({ segmentLength: Math.max(1, v) })}
+          step={5}
+          precision={0}
+        />
+        <div className="prop-row">
+          <span className="prop-row-label">Width</span>
+          <label
+            className="prop-row-control chain-checkbox"
+            title="Auto: derive width from the texture (natural — draw the strand at the size you want). Override: pixel value below."
+          >
+            <input
+              type="checkbox"
+              checked={widthIsAuto}
+              onChange={(e) =>
+                onChange({
+                  width: e.target.checked
+                    ? undefined
+                    : (autoWidth ?? 100),
+                })
+              }
+            />
+            <span>
+              {widthIsAuto
+                ? `Auto${autoWidth !== null ? ` (${autoWidth}px)` : ""}`
+                : "Override"}
+            </span>
+          </label>
+        </div>
+        {!widthIsAuto && (
+          <NumberField
+            label="Width px"
+            value={ribbon.width ?? autoWidth ?? 100}
+            onChange={(v) => onChange({ width: Math.max(1, v) })}
+            step={5}
+            precision={0}
+          />
+        )}
+        <NumberField
+          label="Rest angle°"
+          value={ribbon.restAngle}
+          onChange={(v) => onChange({ restAngle: v })}
+          step={5}
+          precision={1}
+        />
+        <NumberField
+          label="Gravity"
+          value={ribbon.gravity}
+          onChange={(v) => onChange({ gravity: v })}
+          step={50}
+          precision={0}
+        />
+        {/*
+         * Damping: same special-case as chain — 0 means "no damping"
+         * (perpetual swing) per the runtime guard. Step 0.02 so the
+         * lively-but-not-floaty range (0.7..0.9) is fine-tunable.
+         */}
+        <NumberField
+          label="Damping"
+          value={ribbon.damping}
+          onChange={(v) =>
+            onChange({ damping: Math.max(0, Math.min(1, v)) })
+          }
+          step={0.02}
+          precision={2}
+        />
+        <NumberField
+          label="Vel coupling"
+          value={ribbon.velocityCoupling}
+          onChange={(v) =>
+            onChange({ velocityCoupling: Math.max(0, Math.min(1, v)) })
+          }
+          step={0.05}
+          precision={2}
+        />
+        <NumberField
+          label="Anchor X"
+          value={ribbon.anchorOffset.x}
+          onChange={(v) =>
+            onChange({ anchorOffset: { x: v, y: ribbon.anchorOffset.y } })
+          }
+          step={1}
+          precision={1}
+        />
+        <NumberField
+          label="Anchor Y"
+          value={ribbon.anchorOffset.y}
+          onChange={(v) =>
+            onChange({ anchorOffset: { x: ribbon.anchorOffset.x, y: v } })
+          }
+          step={1}
+          precision={1}
+        />
+      </div>
+      <p
+        className="empty"
+        style={{
+          fontSize: 11,
+          margin: "4px 0 0 0",
+          color: "var(--text-dim)",
+        }}
+      >
+        Texture convention: top of the image is the attachment point;
+        bottom is the loose end. Total length = segments × segmentLength
+        ({ribbon.segments * ribbon.segmentLength}px at rest).
+      </p>
     </div>
   );
 }

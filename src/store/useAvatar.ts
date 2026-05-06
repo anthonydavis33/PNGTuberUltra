@@ -13,10 +13,12 @@ import {
   DEFAULT_CHAIN_CONFIG,
   DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
+  DEFAULT_RIBBON_CONFIG,
   DEFAULT_TRANSFORM,
   KeyboardConfig,
   MicConfig,
   Modifier,
+  RibbonConfig,
   Sprite,
   SpriteId,
   SpriteSheet,
@@ -135,6 +137,16 @@ interface AvatarStore {
   setSpriteChain: (
     id: SpriteId,
     patch: Partial<ChainConfig> | undefined,
+  ) => void;
+  /** Set or patch a sprite's ribbon physics config. Pass undefined
+   *  to disable. Enabling ribbon CLEARS cornerOffsets — the two are
+   *  mutually exclusive at render time (both define mesh geometry,
+   *  the renderer can only have one). The store enforces the
+   *  exclusion alongside the UI guard so old saved data with both
+   *  set ends up clean after the next user-initiated edit. */
+  setSpriteRibbon: (
+    id: SpriteId,
+    patch: Partial<RibbonConfig> | undefined,
   ) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
   /** Rename a sprite. Empty / whitespace-only names are silently
@@ -381,6 +393,46 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
       },
     })),
 
+  setSpriteRibbon: (id, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== id) return s;
+          if (patch === undefined) {
+            // Disable ribbon. ChainSimulator.pruneStaleRibbons clears
+            // physics state next tick; sprite returns to whichever
+            // mesh path applies (regular sprite or 4-corner mesh).
+            const next = { ...s };
+            delete next.ribbon;
+            return next;
+          }
+          // Enable / patch ribbon. Drop cornerOffsets in the same
+          // mutation — ribbon and 4-corner are mutually exclusive at
+          // render time, so the cleanest semantic is "enabling
+          // ribbon disables corner mesh." UI also blocks toggling
+          // both on at once, but the store guard catches old saved
+          // data with both set.
+          const cur: RibbonConfig = s.ribbon ?? DEFAULT_RIBBON_CONFIG;
+          const merged: RibbonConfig = {
+            ...cur,
+            ...patch,
+            anchorOffset: {
+              ...cur.anchorOffset,
+              ...(patch.anchorOffset ?? {}),
+            },
+          };
+          const next = { ...s, ribbon: merged };
+          if (next.cornerOffsets) {
+            // Strip cornerOffsets to keep the rendered shape
+            // consistent with the chosen primitive.
+            delete next.cornerOffsets;
+          }
+          return next;
+        }),
+      },
+    })),
+
   setSpriteChain: (id, patch) =>
     set((state) => ({
       model: {
@@ -444,7 +496,14 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
             bl: { ...cur.bl, ...(patch.bl ?? {}) },
             br: { ...cur.br, ...(patch.br ?? {}) },
           };
-          return { ...s, cornerOffsets: merged };
+          // Same mutual-exclusion guard as setSpriteRibbon: enabling
+          // 4-corner mesh disables ribbon. Both paths produce mesh
+          // geometry, the renderer can only commit to one shape.
+          const next = { ...s, cornerOffsets: merged };
+          if (next.ribbon) {
+            delete next.ribbon;
+          }
+          return next;
         }),
       },
     })),

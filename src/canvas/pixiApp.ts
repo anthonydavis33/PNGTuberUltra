@@ -256,6 +256,14 @@ export class PixiApp {
    *  when their baseTransform runs. Stateful across frames (point
    *  positions persist for verlet integration). */
   private readonly chainSimulator = new ChainSimulator();
+  /** Set of sprite ids whose Pixi Mesh was created as a ribbon (vs
+   *  4-corner mesh). Both render paths produce a Mesh, but their
+   *  geometries are completely different — ribbons have (segments+1)*2
+   *  vertices arranged as a strip, 4-corner has 4 vertices. We need
+   *  to know which one the existing display object is so syncSprites
+   *  can detect a kind-swap and recreate. The Set is the cheapest way
+   *  to tag without changing the Mesh class itself. */
+  private readonly ribbonMeshIds = new Set<string>();
   /** Wallclock time of the previous tick (in seconds), for dt computation. */
   private lastTickTime: number | null = null;
   /** When true, the per-frame ticker no-ops. Driven by PixiCanvas in
@@ -429,23 +437,32 @@ export class PixiApp {
       let sprite = this.spriteMap.get(ms.id);
       const currentAsset = this.spriteAssetMap.get(ms.id);
 
-      // 4-corner mesh deformation toggles the renderable class.
-      // Recreate from scratch when the user adds or removes corner
-      // offsets — the two render paths use different display objects
-      // (PixiSprite vs Mesh) and we can't morph between them.
-      // `spriteNeedsMesh` returns true for sprites with base offsets
-      // OR any pose binding declaring corner targets, so adding a
-      // corner-driving pose to a non-mesh sprite auto-promotes it.
-      const wantsMesh = spriteNeedsMesh(ms);
+      // Three render paths: regular PixiSprite, 4-corner Mesh, and
+      // ribbon Mesh. They use different display object kinds + (in
+      // the case of two Mesh paths) different geometries, and we
+      // can't morph between them — toggling between any of the three
+      // forces a destroy + recreate.
+      //
+      // Priority: ribbon > 4-corner > regular sprite. Ribbon and
+      // cornerOffsets are mutually exclusive at the store level
+      // (setSpriteRibbon clears cornerOffsets and vice versa) but
+      // we defensively pick ribbon first if both somehow get set.
+      const wantsRibbon = !!ms.ribbon;
+      const wantsCornerMesh = !wantsRibbon && spriteNeedsMesh(ms);
       const isMesh = sprite instanceof Mesh;
-      // Asset swap on a Mesh also forces recreate — the new texture
-      // may have different visibleBounds, which means different UVs
-      // and quad size baked into the mesh geometry.
+      const isRibbon = isMesh && this.ribbonMeshIds.has(ms.id);
+      const isCornerMesh = isMesh && !isRibbon;
+      // Asset swap on a Mesh forces recreate — the new texture may
+      // have different visibleBounds (corner mesh) or different
+      // dimensions (ribbon width derivation).
       const meshAssetSwapped =
         isMesh && sprite && currentAsset !== ms.asset;
-      if (sprite && (wantsMesh !== isMesh || meshAssetSwapped)) {
+      const kindMismatch =
+        wantsRibbon !== isRibbon || wantsCornerMesh !== isCornerMesh;
+      if (sprite && (kindMismatch || meshAssetSwapped)) {
         sprite.destroy();
         this.spriteMap.delete(ms.id);
+        this.ribbonMeshIds.delete(ms.id);
         this.disposeSheet(ms.id);
         sprite = undefined;
       }
@@ -469,6 +486,7 @@ export class PixiApp {
         sprite.destroy();
         this.spriteMap.delete(id);
         this.spriteAssetMap.delete(id);
+        this.ribbonMeshIds.delete(id);
         this.disposeSheet(id);
         this.lastBoundFrame.delete(id);
         // Drop any mask clone associated with this clipped sprite. If
@@ -991,6 +1009,38 @@ export class PixiApp {
     }
     this.chainSimulator.pruneStaleState(sprites);
 
+    // Same dance for ribbons. Each ribbon sprite is its own anchor:
+    // we evaluate ITS world transform and use that as the top of
+    // the strip. No leader-follower hierarchy here — ribbons are
+    // single-sprite physics. Parent modifier on the sprite handles
+    // the "hair attached to head" case (the sprite's effective
+    // transform composes through its parent).
+    for (const ms of sprites) {
+      if (!ms.ribbon) continue;
+      const t = this.modifierRunner.evaluate(ms, sprites, dt, now);
+      const cfg = ms.ribbon;
+      const rotRad = (t.rotation * Math.PI) / 180;
+      const cosR = Math.cos(rotRad);
+      const sinR = Math.sin(rotRad);
+      const anchorWorldX =
+        t.x +
+        cfg.anchorOffset.x * cosR * t.scaleX -
+        cfg.anchorOffset.y * sinR * t.scaleY;
+      const anchorWorldY =
+        t.y +
+        cfg.anchorOffset.x * sinR * t.scaleX +
+        cfg.anchorOffset.y * cosR * t.scaleY;
+      this.chainSimulator.stepRibbon(
+        ms.id,
+        anchorWorldX,
+        anchorWorldY,
+        t.rotation,
+        cfg,
+        dt,
+      );
+    }
+    this.chainSimulator.pruneStaleRibbons(sprites);
+
     let selectedTransform: EffectiveTransform | null = null;
 
     for (const ms of sprites) {
@@ -1057,20 +1107,37 @@ export class PixiApp {
       // Effective transform = base + bindings + modifiers (parent compose,
       // spring/drag smoothing, sine offset).
       const t = this.modifierRunner.evaluate(ms, sprites, dt, now);
-      pixiSprite.x = t.x;
-      pixiSprite.y = t.y;
-      pixiSprite.rotation = (t.rotation * Math.PI) / 180;
-      pixiSprite.scale.set(t.scaleX, t.scaleY);
-      pixiSprite.alpha = t.alpha;
 
-      // Re-stretch the mesh quad to match current texture size + anchor
-      // + effective corner offsets (base + pose-binding contributions).
-      // Doing it every frame is cheap and is what makes pose-driven
-      // corner targets animate as the source channel changes (head-turn
-      // perspective skew tracking HeadYaw, etc.). Editing override
-      // forces the actively-edited binding's progress to 1.
-      if (pixiSprite instanceof Mesh) {
-        this.updateMeshVertices(pixiSprite, ms, assets, poseOpts);
+      if (ms.ribbon && pixiSprite instanceof Mesh) {
+        // Ribbon mesh: geometry encodes WORLD-coord vertex positions
+        // directly (set per-frame from chain simulator output), so the
+        // mesh's Pixi transform stays at identity. Writing t.x/t.y/
+        // t.rotation/t.scale here would double-apply and the ribbon
+        // would visibly jump. Alpha + visibility still come from the
+        // effective transform — those compose normally.
+        pixiSprite.x = 0;
+        pixiSprite.y = 0;
+        pixiSprite.rotation = 0;
+        pixiSprite.scale.set(1, 1);
+        pixiSprite.alpha = t.alpha;
+        this.updateRibbonGeometry(pixiSprite, ms, assets);
+      } else {
+        pixiSprite.x = t.x;
+        pixiSprite.y = t.y;
+        pixiSprite.rotation = (t.rotation * Math.PI) / 180;
+        pixiSprite.scale.set(t.scaleX, t.scaleY);
+        pixiSprite.alpha = t.alpha;
+
+        // Re-stretch the 4-corner mesh quad to match current texture
+        // size + anchor + effective corner offsets (base + pose-
+        // binding contributions). Doing it every frame is cheap and
+        // is what makes pose-driven corner targets animate as the
+        // source channel changes (head-turn perspective skew tracking
+        // HeadYaw, etc.). Editing override forces the actively-
+        // edited binding's progress to 1.
+        if (pixiSprite instanceof Mesh) {
+          this.updateMeshVertices(pixiSprite, ms, assets, poseOpts);
+        }
       }
 
       if (ms.id === selectedId) selectedTransform = t;
@@ -1512,13 +1579,17 @@ export class PixiApp {
     ms: ModelSprite,
     assets: Record<string, AssetEntry>,
   ): Renderable {
-    // Use the same promotion test syncSprites uses — base
-    // cornerOffsets OR any pose binding declaring corner targets.
-    // Using ms.cornerOffsets directly here (the previous version)
-    // missed pose-driven promotion: syncSprites would destroy the
-    // existing PixiSprite expecting a Mesh, createRenderable would
-    // hand back another PixiSprite, and the mismatch repeated every
-    // sync — sprite never deformed because it was never a Mesh.
+    // Same priority as syncSprites: ribbon > 4-corner > regular.
+    // Ribbon and cornerOffsets are mutually exclusive at the store
+    // level; the priority here just picks ribbon first if data is
+    // ever inconsistent. createRibbonMesh tags the ribbonMeshIds
+    // set so syncSprites' kind-swap detection works on subsequent
+    // syncs.
+    if (ms.ribbon) {
+      const mesh = this.createRibbonMesh(ms, assets);
+      this.ribbonMeshIds.add(ms.id);
+      return mesh;
+    }
     return spriteNeedsMesh(ms)
       ? this.createMesh(ms, assets)
       : this.createSprite(ms, assets);
@@ -1739,7 +1810,203 @@ export class PixiApp {
     } else {
       // Mesh: anchor is baked into vertex positions, recompute now so
       // the first render paints correctly before tickBindings fires.
-      this.updateMeshVertices(renderable, ms, assets);
+      // Ribbon meshes get their positions from the chain simulator —
+      // the first frame's tickBindings runs stepRibbon + the geometry
+      // updater before render, so we don't need to seed positions
+      // here.
+      if (!ms.ribbon) {
+        this.updateMeshVertices(renderable, ms, assets);
+      }
+    }
+  }
+
+  /**
+   * Build a strip Mesh for ribbon physics. The geometry is a tall
+   * 2-vertex-wide strip with `(segments + 1)` rings; vertex
+   * positions get rewritten EVERY frame from the chain simulator's
+   * ring positions in `updateRibbonGeometry`. The texture wraps the
+   * strip with u=0..1 across width and v=0..1 along length, so a
+   * tall hair-strand texture flows continuously along the curve.
+   *
+   * Mesh transform stays at identity (x=0, y=0, rotation=0,
+   * scale=1) because the geometry encodes WORLD-coord positions
+   * directly — the simulator outputs world points, no local-frame
+   * conversion needed. tickBindings / applyTransform skip the
+   * usual transform writes for ribbon meshes (gated by ms.ribbon).
+   *
+   * Hit area is a generous bounding rect updated each frame in
+   * updateRibbonGeometry; selection / drag work the same as
+   * regular sprites and 4-corner meshes.
+   */
+  private createRibbonMesh(
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): Mesh {
+    const cfg = ms.ribbon!;
+    const texture = this.resolveTexture(ms.asset, assets);
+    const segments = Math.max(1, Math.floor(cfg.segments));
+    const numRings = segments + 1;
+    const numVerts = numRings * 2;
+
+    // Positions are placeholders — updateRibbonGeometry rewrites
+    // every frame. The first paint runs that updater synchronously
+    // before the first render via tickBindings, so users never see
+    // a zero-position frame.
+    const positions = new Float32Array(numVerts * 2);
+
+    // UVs: u=0 (left) / u=1 (right), v=i/segments (top to bottom).
+    // Texture orientation convention: top of texture (v=0) is the
+    // attachment point; bottom (v=1) is the loose end. Documented in
+    // the RibbonConfig jsdoc.
+    const uvs = new Float32Array(numVerts * 2);
+    for (let i = 0; i < numRings; i++) {
+      const v = i / segments;
+      // Vertex layout: [leftU, leftV, rightU, rightV] per ring.
+      uvs[i * 4 + 0] = 0;
+      uvs[i * 4 + 1] = v;
+      uvs[i * 4 + 2] = 1;
+      uvs[i * 4 + 3] = v;
+    }
+
+    // Indices: for each segment, two triangles forming the quad
+    // between ring i and ring i+1. CCW winding — matches the
+    // 4-corner mesh's convention so default culling (if any) doesn't
+    // drop the strip.
+    const indices = new Uint32Array(segments * 6);
+    for (let s = 0; s < segments; s++) {
+      const tl = s * 2; // top-left = ring s, left vertex
+      const tr = s * 2 + 1; // top-right = ring s, right vertex
+      const bl = (s + 1) * 2; // bottom-left = ring s+1, left vertex
+      const br = (s + 1) * 2 + 1; // bottom-right = ring s+1, right vertex
+      indices[s * 6 + 0] = tl;
+      indices[s * 6 + 1] = tr;
+      indices[s * 6 + 2] = bl;
+      indices[s * 6 + 3] = tr;
+      indices[s * 6 + 4] = br;
+      indices[s * 6 + 5] = bl;
+    }
+
+    const geometry = new MeshGeometry({ positions, uvs, indices });
+    const mesh = new Mesh({ geometry, texture });
+    mesh.cursor = "grab";
+    mesh.eventMode = "static";
+    // Initial hit area — gets refined to the actual ribbon bounds
+    // in updateRibbonGeometry. A zero-rect would skip hit testing
+    // until the first geometry update; a generous initial rect
+    // keeps the click responsive on first paint.
+    mesh.hitArea = new Rectangle(-200, -200, 400, 400);
+
+    mesh.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      this.onSelect?.(ms.id);
+      this.dragState = { id: ms.id, lastX: e.global.x, lastY: e.global.y };
+      mesh.cursor = "grabbing";
+    });
+    void assets;
+    return mesh;
+  }
+
+  /**
+   * Update a ribbon mesh's vertex positions from the chain simulator's
+   * current ring points. Called once per frame from tickBindings
+   * (after stepRibbon has run). Each ring contributes two vertices —
+   * left and right of the centerline, separated by the ribbon's
+   * width perpendicular to the curve direction at that ring.
+   *
+   * Direction at each ring is approximated:
+   *   - Ring 0: pointing toward ring 1.
+   *   - Last ring: pointing from the prev ring (extrapolation).
+   *   - Middle rings: averaged tangent (next - prev) / 2 — this is
+   *     what gives the strip a smooth curve through bends instead
+   *     of visible kinks at each segment boundary.
+   *
+   * Width comes from `cfg.width` if set, otherwise the asset's
+   * texture width — natural default that lets users draw at the
+   * intended size without configuring anything.
+   */
+  private updateRibbonGeometry(
+    mesh: Mesh,
+    ms: ModelSprite,
+    assets: Record<string, AssetEntry>,
+  ): void {
+    const cfg = ms.ribbon;
+    if (!cfg) return;
+    const points = this.chainSimulator.getRibbonPoints(ms.id);
+    if (!points || points.length === 0) return;
+
+    // Width: explicit override or texture-derived default.
+    const asset = ms.asset ? assets[ms.asset] : undefined;
+    const baseWidth =
+      cfg.width ?? (asset && asset.width > 0 ? asset.width : 100);
+    const halfW = baseWidth / 2;
+
+    const numRings = points.length;
+    const positions = new Float32Array(numRings * 4);
+
+    // Track bounding box for hit-area update.
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (let i = 0; i < numRings; i++) {
+      const p = points[i]!;
+      // Tangent direction at this ring.
+      let tx = 0;
+      let ty = 0;
+      if (i === 0) {
+        // Top: direction from anchor to next ring.
+        tx = points[1]!.x - p.x;
+        ty = points[1]!.y - p.y;
+      } else if (i === numRings - 1) {
+        // Bottom: extrapolate from previous segment.
+        tx = p.x - points[i - 1]!.x;
+        ty = p.y - points[i - 1]!.y;
+      } else {
+        // Middle: average of incoming + outgoing for smooth bends.
+        tx = points[i + 1]!.x - points[i - 1]!.x;
+        ty = points[i + 1]!.y - points[i - 1]!.y;
+      }
+      // Perpendicular = rotate tangent 90° CCW: (-ty, tx).
+      const tlen = Math.sqrt(tx * tx + ty * ty) || 1;
+      const perpX = (-ty / tlen) * halfW;
+      const perpY = (tx / tlen) * halfW;
+
+      // Left vertex (perp direction).
+      const lx = p.x + perpX;
+      const ly = p.y + perpY;
+      // Right vertex (-perp direction).
+      const rx = p.x - perpX;
+      const ry = p.y - perpY;
+      positions[i * 4 + 0] = lx;
+      positions[i * 4 + 1] = ly;
+      positions[i * 4 + 2] = rx;
+      positions[i * 4 + 3] = ry;
+
+      // Update bounding box.
+      if (lx < minX) minX = lx;
+      if (rx < minX) minX = rx;
+      if (lx > maxX) maxX = lx;
+      if (rx > maxX) maxX = rx;
+      if (ly < minY) minY = ly;
+      if (ry < minY) minY = ry;
+      if (ly > maxY) maxY = ly;
+      if (ry > maxY) maxY = ry;
+    }
+
+    // Pixi 8: assign via the geometry positions setter so the GPU
+    // buffer's _updateSize counter ticks; raw Buffer.update() leaves
+    // the buffer at the wrong size and produces sub-pixel drift
+    // (this is the same root cause as the corner-mesh bug fixed in
+    // phase 8d — same fix pattern).
+    mesh.geometry.positions = positions;
+
+    // Hit area = ribbon bounds. Conservative — doesn't account for
+    // the texture's transparent borders, so clicks slightly outside
+    // the visible art still register as ribbon hits. v2 polish would
+    // do per-pixel hit testing along each segment.
+    if (Number.isFinite(minX)) {
+      mesh.hitArea = new Rectangle(minX, minY, maxX - minX, maxY - minY);
     }
   }
 }

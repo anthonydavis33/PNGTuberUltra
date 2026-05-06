@@ -94,6 +94,25 @@ export interface Sprite {
     br: { x: number; y: number };
   };
   /**
+   * Ribbon physics — single-sprite verlet chain that deforms a
+   * tall texture along a flowing curve. The TOP of the texture
+   * stays anchored to the sprite's world transform (typically
+   * parented to the head/body); the rest of the texture bends
+   * along physics-driven control points. Use for hair strands,
+   * tails, capes, scarves drawn as ONE long PNG.
+   *
+   * Mutually exclusive with `cornerOffsets` (4-corner mesh) at
+   * render time — both define mesh geometry and we can only have
+   * one. The Properties UI hides one section when the other is
+   * enabled; if both somehow get set in saved data, ribbon wins.
+   *
+   * Texture orientation convention: draw the strand with the
+   * attachment point at the TOP of the image (v=0) and the loose
+   * end at the BOTTOM (v=1). Width of the texture = ribbon width
+   * unless `width` overrides it.
+   */
+  ribbon?: RibbonConfig;
+  /**
    * Verlet-chain physics. Designates this sprite as a chain ANCHOR
    * (typically the head, body, or other "leader") and drives a list
    * of follower sprites with chain-physics-derived position +
@@ -187,6 +206,76 @@ export const DEFAULT_CHAIN_CONFIG: ChainConfig = {
   damping: 0.85,
   iterations: 4,
   alignRotation: true,
+  velocityCoupling: 0.4,
+  anchorOffset: { x: 0, y: 0 },
+};
+
+// ---------------------------------------------------------------- Ribbon physics
+
+/**
+ * Ribbon physics on a single sprite — the texture renders as a
+ * deformable strip with N segments, where the top edge is anchored
+ * to the sprite's world transform and each subsequent segment is
+ * physics-driven via verlet integration.
+ *
+ * The mesh is a strip of (segments+1) "rings", each with a left
+ * and right vertex separated by `width` perpendicular to the
+ * ribbon's local direction. Texture UVs map u=0..1 across width
+ * and v=0..1 along length, so a tall hair-strand image renders as
+ * a continuous flow along the chain.
+ *
+ * Anchor: the TOP ring (v=0) is pinned to the sprite's world
+ * transform position plus `anchorOffset` (rotated by sprite
+ * rotation, scaled by sprite scale). This means parenting the
+ * sprite to a head via Parent modifier rigs hair-on-head correctly.
+ * Subsequent rings are simulated in WORLD frame so gravity always
+ * pulls toward world-down regardless of head tilt.
+ *
+ * Mutually exclusive with `cornerOffsets` — both define mesh
+ * geometry. Properties UI hides one section when the other is on.
+ */
+export interface RibbonConfig {
+  /** Number of segments along the ribbon's length. Higher = smoother
+   *  curves but more verlet work per frame. 4-12 is the sweet spot;
+   *  >16 is rarely visually distinguishable. */
+  segments: number;
+  /**
+   * Pixel width of the ribbon, perpendicular to its length.
+   * Undefined = derive from the texture's width at render time
+   * (most natural — user draws a strand at the desired width and
+   * the ribbon uses that). Override when the texture is taller
+   * than wide and you want the ribbon to render skinnier than the
+   * raw texture.
+   */
+  width?: number;
+  /** Length of each segment in pixels. Total ribbon rest length =
+   *  segments * segmentLength. */
+  segmentLength: number;
+  /** Initial rest direction in degrees from straight down. Same
+   *  semantics as ChainConfig.restAngle. */
+  restAngle: number;
+  gravity: number;
+  damping: number;
+  iterations: number;
+  velocityCoupling: number;
+  /** Anchor offset from the sprite's pivot, in sprite-local pixels.
+   *  Lets the ribbon attach at a non-pivot point — e.g. a tail
+   *  attached at the back of the body, not center. Same semantics
+   *  as ChainConfig.anchorOffset. */
+  anchorOffset: { x: number; y: number };
+}
+
+/** Default ribbon config. Applied when the user enables ribbon on
+ *  a sprite for the first time. Defaults tuned for a typical
+ *  shoulder-length hair strand attached to a head. */
+export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
+  segments: 8,
+  // width undefined = derive from asset width at render time
+  segmentLength: 25,
+  restAngle: 0,
+  gravity: 800,
+  damping: 0.85,
+  iterations: 4,
   velocityCoupling: 0.4,
   anchorOffset: { x: 0, y: 0 },
 };

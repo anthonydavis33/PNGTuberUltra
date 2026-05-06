@@ -32,7 +32,12 @@
 // drops state when the leader is deleted or its chain config is
 // removed.
 
-import type { ChainConfig, Sprite, SpriteId } from "../types/avatar";
+import type {
+  ChainConfig,
+  RibbonConfig,
+  Sprite,
+  SpriteId,
+} from "../types/avatar";
 
 /** Per-point physics state. Verlet uses (pos, prevPos) instead of
  *  (pos, velocity); the implicit velocity is pos-prevPos which damps
@@ -71,6 +76,13 @@ export interface ChainOverride {
 
 export class ChainSimulator {
   private chains = new Map<SpriteId, ChainState>();
+  /** Per-sprite ribbon physics state. Distinct from `chains` because
+   *  ribbons are owned by the rendering sprite (single-sprite
+   *  primitive) while chains are owned by a leader that drives
+   *  multiple followers. Same verlet integration internals; this is
+   *  just keying by SpriteId without the multi-link override map.
+   *  Render code reads ring positions via getRibbonPoints(). */
+  private ribbons = new Map<SpriteId, ChainState>();
   /** Per-sprite override map. Cleared at the start of each frame;
    *  populated by step() calls; queried by ModifierRunner. */
   private overrides = new Map<SpriteId, ChainOverride>();
@@ -99,6 +111,158 @@ export class ChainSimulator {
     for (const id of Array.from(this.chains.keys())) {
       if (!liveLeaders.has(id)) this.chains.delete(id);
     }
+  }
+
+  /** Drop ribbon state for sprites that no longer have a ribbon
+   *  config or have been deleted. Run alongside pruneStaleState. */
+  pruneStaleRibbons(sprites: Sprite[]): void {
+    const liveRibbons = new Set<SpriteId>();
+    for (const s of sprites) {
+      if (s.ribbon) liveRibbons.add(s.id);
+    }
+    for (const id of Array.from(this.ribbons.keys())) {
+      if (!liveRibbons.has(id)) this.ribbons.delete(id);
+    }
+  }
+
+  /** Look up the current world-space positions of a ribbon's rings.
+   *  Returns an array of (segments + 1) {x, y} points, top to bottom.
+   *  Renderer uses this to lay out the strip mesh's vertex
+   *  positions each frame. Returns undefined for sprites without
+   *  ribbon state (e.g. before the first stepRibbon, or after
+   *  pruneStaleRibbons). */
+  getRibbonPoints(spriteId: SpriteId): { x: number; y: number }[] | undefined {
+    const state = this.ribbons.get(spriteId);
+    if (!state) return undefined;
+    return state.points.map((p) => ({ x: p.x, y: p.y }));
+  }
+
+  /**
+   * Run one frame of verlet simulation for a ribbon attached to
+   * `spriteId`. Same shape as step() above, but state lives in
+   * `ribbons` (per-sprite) instead of `chains` (per-leader).
+   *
+   * Anchor is the sprite's own world position + rotated
+   * anchorOffset, so the ribbon's TOP RING tracks the sprite as
+   * it moves / rotates / parents to a head. Subsequent rings
+   * simulate in world frame — gravity always pulls toward
+   * world-down regardless of sprite rotation, which is what
+   * users expect from ribbon physics.
+   */
+  stepRibbon(
+    spriteId: SpriteId,
+    anchorWorldX: number,
+    anchorWorldY: number,
+    leaderRotationDeg: number,
+    config: RibbonConfig,
+    dt: number,
+  ): void {
+    const stepDt = Math.min(dt, 0.05);
+    if (stepDt <= 0) return;
+
+    // Ribbon points: anchor + segments. So (segments + 1) total.
+    const totalPoints = config.segments + 1;
+    let state = this.ribbons.get(spriteId);
+    if (!state || state.points.length !== totalPoints) {
+      state = this.initRibbonState(
+        anchorWorldX,
+        anchorWorldY,
+        leaderRotationDeg,
+        config,
+        totalPoints,
+      );
+      this.ribbons.set(spriteId, state);
+    }
+
+    // Anchor (point 0) tracks the sprite. Same prev-anchor delta
+    // bookkeeping as the chain step for velocity coupling.
+    const prevAnchorX = state.prevAnchorX;
+    const prevAnchorY = state.prevAnchorY;
+    state.points[0]!.prevX = state.points[0]!.x;
+    state.points[0]!.prevY = state.points[0]!.y;
+    state.points[0]!.x = anchorWorldX;
+    state.points[0]!.y = anchorWorldY;
+    state.prevAnchorX = anchorWorldX;
+    state.prevAnchorY = anchorWorldY;
+
+    const anchorDX = state.initialized ? anchorWorldX - prevAnchorX : 0;
+    const anchorDY = state.initialized ? anchorWorldY - prevAnchorY : 0;
+    state.initialized = true;
+
+    // Verlet integration with gravity + damping + velocity coupling.
+    // Same singularity guard as chain step: damping=0 means "no
+    // damping" (perpetual swing) rather than "pow(0, dt) = 0
+    // instant freeze."
+    const dampingPerStep =
+      config.damping <= 0 ? 1 : Math.pow(config.damping, stepDt);
+    const gravityStep = config.gravity * stepDt * stepDt;
+    for (let i = 1; i < totalPoints; i++) {
+      const p = state.points[i]!;
+      const vx = (p.x - p.prevX) * dampingPerStep;
+      const vy = (p.y - p.prevY) * dampingPerStep;
+      const couplingX = i === 1 ? anchorDX * config.velocityCoupling : 0;
+      const couplingY = i === 1 ? anchorDY * config.velocityCoupling : 0;
+      p.prevX = p.x;
+      p.prevY = p.y;
+      p.x += vx + couplingX;
+      p.y += vy + couplingY + gravityStep;
+    }
+
+    // Distance constraints. Top is fixed (anchor); subsequent pairs
+    // share the correction symmetrically. Same as chain step.
+    const seg = config.segmentLength;
+    for (let iter = 0; iter < config.iterations; iter++) {
+      for (let i = 1; i < totalPoints; i++) {
+        const a = state.points[i - 1]!;
+        const b = state.points[i]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+        const diff = (dist - seg) / dist;
+        if (i === 1) {
+          b.x -= dx * diff;
+          b.y -= dy * diff;
+        } else {
+          const half = diff * 0.5;
+          a.x += dx * half;
+          a.y += dy * half;
+          b.x -= dx * half;
+          b.y -= dy * half;
+        }
+      }
+    }
+    // Note: ribbon doesn't write per-link rotation overrides like
+    // chain does — there ARE no follower sprites to rotate. The
+    // renderer reads the raw ring positions via getRibbonPoints
+    // and computes mesh vertex positions from them directly.
+  }
+
+  /** Lay out the rest pose for a ribbon — same as chain init but
+   *  duplicated here so the two state types stay independent. */
+  private initRibbonState(
+    anchorX: number,
+    anchorY: number,
+    leaderRotationDeg: number,
+    config: RibbonConfig,
+    totalPoints: number,
+  ): ChainState {
+    const totalAngleRad =
+      ((config.restAngle + leaderRotationDeg) * Math.PI) / 180;
+    const dirX = Math.sin(totalAngleRad);
+    const dirY = Math.cos(totalAngleRad);
+
+    const points: PointState[] = [];
+    for (let i = 0; i < totalPoints; i++) {
+      const x = anchorX + dirX * config.segmentLength * i;
+      const y = anchorY + dirY * config.segmentLength * i;
+      points.push({ x, y, prevX: x, prevY: y });
+    }
+    return {
+      points,
+      initialized: false,
+      prevAnchorX: anchorX,
+      prevAnchorY: anchorY,
+    };
   }
 
   /**
