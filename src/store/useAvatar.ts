@@ -481,11 +481,30 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
     const source = state.model.sprites[sourceIdx]!;
     const newId = genId();
 
+    // Visual offset so the duplicate is immediately distinguishable
+    // from the source. Photoshop's "Duplicate Layer" puts the copy
+    // at the EXACT same position which is fine in Photoshop because
+    // its layer panel + canvas selection are tightly synced; in our
+    // editor with per-pixel hit testing, two pixel-identical sprites
+    // overlapping means users can't tell visually which one they
+    // just clicked. 24px on both axes is enough to read as "this is
+    // a separate thing" without flying off-canvas. User can drag it
+    // back to the source's position if they want them coincident.
+    const NUDGE_PX = 24;
+
     // Deep-copy with fresh ids for child objects that have their own
     // ids. References to OTHER sprites (modifier.parentSpriteId,
     // modifier.followSpriteId, sprite.clipBy) are preserved by id —
     // the duplicate inherits the same parent / follow / clip targets,
     // which is what users expect from "make me another one of these."
+    //
+    // Nested objects inside bindings (mapping, condition, pose,
+    // poseCornerOffsets, pivot) are deep-cloned via JSON round-trip
+    // so future edits to the duplicate's bindings don't silently
+    // mutate the source's. JSON round-trip is fine here because all
+    // these structures are pure data (no functions, no Dates, no
+    // class instances) — and slower paths like structuredClone
+    // would also work but JSON is universally available and clear.
     const dup: Sprite = {
       ...source,
       id: newId,
@@ -494,25 +513,28 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
       // clever ("Hair copy 2", "Hair copy 3") — manual rename is
       // cleaner than reading minds.
       name: `${source.name} copy`,
-      // Fresh transform reference so future edits don't share with the
-      // source's nested objects (Object.assign-shallow would share
-      // them otherwise). Same for anchor.
-      transform: { ...source.transform },
+      // Fresh transform with the visual nudge applied. Anchor is a
+      // shallow clone (it's a flat {x, y} object with no nested
+      // structures).
+      transform: {
+        ...source.transform,
+        x: source.transform.x + NUDGE_PX,
+        y: source.transform.y + NUDGE_PX,
+      },
       anchor: { ...source.anchor },
-      // Bindings: each gets a fresh id so edits to either sprite's
-      // bindings don't propagate. The Binding union has multiple
-      // shapes; spread + new id covers all of them since `id` is
-      // the only common field that needs to differ.
+      // Bindings: deep-clone via JSON round-trip to detach nested
+      // mapping / condition / pose / poseCornerOffsets / pivot
+      // objects from the source, then assign fresh ids on top.
       bindings: source.bindings.map((b) => ({
-        ...b,
+        ...(JSON.parse(JSON.stringify(b)) as typeof b),
         id: `b-${crypto.randomUUID().slice(0, 8)}`,
       })),
       modifiers: source.modifiers.map((m) => ({
-        ...m,
+        ...(JSON.parse(JSON.stringify(m)) as typeof m),
         id: `m-${crypto.randomUUID().slice(0, 8)}`,
       })),
       animations: source.animations?.map((a) => ({
-        ...a,
+        ...(JSON.parse(JSON.stringify(a)) as typeof a),
         id: `a-${crypto.randomUUID().slice(0, 8)}`,
       })),
       // sheet / cornerOffsets are nested objects — shallow-clone so
