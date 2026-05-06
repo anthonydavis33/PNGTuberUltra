@@ -88,23 +88,29 @@ export function ModifierRow({
     );
   }
 
-  // Spring / Drag / Sine all have a target property
-  const propertyPicker = (
-    <select
-      className="modifier-property-picker"
-      value={modifier.property}
-      onChange={(e) =>
-        onChange({ property: e.target.value as ModifierTarget })
-      }
-      title="Sprite property this modifier writes to"
-    >
-      {TRANSFORM_TARGETS.map((t) => (
-        <option key={t.value} value={t.value} title={t.title}>
-          {t.label}
-        </option>
-      ))}
-    </select>
-  );
+  // Spring / Drag / Sine all have a target property; Pendulum does
+  // NOT (it always operates on rotation). The picker is only built
+  // for property-driven types — referencing modifier.property on a
+  // pendulum is a type error.
+  const propertyPicker =
+    modifier.type === "spring" ||
+    modifier.type === "drag" ||
+    modifier.type === "sine" ? (
+      <select
+        className="modifier-property-picker"
+        value={modifier.property}
+        onChange={(e) =>
+          onChange({ property: e.target.value as ModifierTarget })
+        }
+        title="Sprite property this modifier writes to"
+      >
+        {TRANSFORM_TARGETS.map((t) => (
+          <option key={t.value} value={t.value} title={t.title}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+    ) : null;
 
   if (modifier.type === "spring") {
     return (
@@ -158,37 +164,86 @@ export function ModifierRow({
     );
   }
 
-  // sine
+  if (modifier.type === "sine") {
+    return (
+      <li className="modifier-row">
+        <div className="modifier-header">
+          {typeBadge}
+          {propertyPicker}
+          {trash}
+        </div>
+        <div className="modifier-params modifier-params-3">
+          <span className="modifier-param-label">amp</span>
+          <NumberField
+            label=""
+            value={modifier.amplitude}
+            onChange={(v) => onChange({ amplitude: v })}
+            step={0.5}
+            precision={1}
+          />
+          <span className="modifier-param-label">freq</span>
+          <NumberField
+            label=""
+            value={modifier.frequency}
+            onChange={(v) => onChange({ frequency: v })}
+            step={0.1}
+            precision={2}
+          />
+          <span className="modifier-param-label">phase</span>
+          <NumberField
+            label=""
+            value={modifier.phase}
+            onChange={(v) => onChange({ phase: v })}
+            step={0.1}
+            precision={2}
+          />
+        </div>
+      </li>
+    );
+  }
+
+  // Pendulum — gravity-aware angular spring. Always writes to
+  // rotation, so no property picker. Four params: rest angle,
+  // gravity strength, damping per second, and parent-motion
+  // coupling. UI mirrors the Sine row's compact 3-param block but
+  // with 4 inputs for pendulum's slightly richer config.
   return (
     <li className="modifier-row">
       <div className="modifier-header">
         {typeBadge}
-        {propertyPicker}
         {trash}
       </div>
-      <div className="modifier-params modifier-params-3">
-        <span className="modifier-param-label">amp</span>
+      <div className="modifier-params modifier-params-4">
+        <span className="modifier-param-label" title="Resting angle in degrees. 0 = hanging straight down (gravity rest); 180 = pointing up (mounted on a bouncy stick).">rest°</span>
         <NumberField
           label=""
-          value={modifier.amplitude}
-          onChange={(v) => onChange({ amplitude: v })}
-          step={0.5}
+          value={modifier.restAngle}
+          onChange={(v) => onChange({ restAngle: v })}
+          step={5}
           precision={1}
         />
-        <span className="modifier-param-label">freq</span>
+        <span className="modifier-param-label" title="Gravity strength (deg/s²). Higher = the pendulum returns to rest more eagerly.">grav</span>
         <NumberField
           label=""
-          value={modifier.frequency}
-          onChange={(v) => onChange({ frequency: v })}
-          step={0.1}
+          value={modifier.gravity}
+          onChange={(v) => onChange({ gravity: v })}
+          step={50}
+          precision={0}
+        />
+        <span className="modifier-param-label" title="Fraction of angular velocity retained per second. Higher (toward 1) = wobbly, lower = stiff.">damp</span>
+        <NumberField
+          label=""
+          value={modifier.damping}
+          onChange={(v) => onChange({ damping: v })}
+          step={0.05}
           precision={2}
         />
-        <span className="modifier-param-label">phase</span>
+        <span className="modifier-param-label" title="How much parent motion injects angular velocity. 0 = pure gravity-only; 1 = swings hard on parent motion.">coup</span>
         <NumberField
           label=""
-          value={modifier.phase}
-          onChange={(v) => onChange({ phase: v })}
-          step={0.1}
+          value={modifier.coupling}
+          onChange={(v) => onChange({ coupling: v })}
+          step={0.05}
           precision={2}
         />
       </div>

@@ -93,7 +93,103 @@ export interface Sprite {
     bl: { x: number; y: number };
     br: { x: number; y: number };
   };
+  /**
+   * Verlet-chain physics. Designates this sprite as a chain ANCHOR
+   * (typically the head, body, or other "leader") and drives a list
+   * of follower sprites with chain-physics-derived position +
+   * optional rotation. Each tick:
+   *   - Anchor point = this sprite's world position + anchorOffset.
+   *   - Verlet integration steps each follower's position with
+   *     gravity + damping; iterations distance-constrain consecutive
+   *     points to segmentLength to keep the chain coherent.
+   *   - Velocity coupling: a fraction of the anchor's frame-to-frame
+   *     velocity is injected into the first follower so the chain
+   *     "whips" when the head moves quickly (rather than smoothly
+   *     trailing — the difference between cartoon hair and damp
+   *     spaghetti).
+   *   - Each follower's position override is written through to the
+   *     ModifierRunner; existing bindings / modifiers / animations
+   *     compose on top, so a hair-tuft can swing physically AND
+   *     have a MicVolume → rotation binding driving its character.
+   *
+   * Chains chain naturally: if a follower sprite ALSO has its own
+   * chain config, it becomes the anchor for its own list of
+   * followers. Useful for branching rigs (e.g. one base "spine"
+   * chain feeding several "rib" chains).
+   *
+   * Undefined / empty links = chain disabled. Cycle detection is
+   * inherited from the modifier runner's parent-cycle logic.
+   */
+  chain?: ChainConfig;
 }
+
+// ---------------------------------------------------------------- Chain physics
+
+/**
+ * Verlet chain attached to a leader sprite.
+ *
+ * `links` is the ORDERED list of follower sprite ids — first link
+ * connects to the anchor, each subsequent link to the previous
+ * follower. Sprite ids that don't resolve to a real sprite are
+ * silently skipped at simulation time (helps when copy-pasting
+ * configs between avatars).
+ */
+export interface ChainConfig {
+  links: SpriteId[];
+  /** Distance between consecutive chain points, in pixels. Each
+   *  follower at simulation time is constrained to be exactly this
+   *  distance from its predecessor. Pre-link rest pose is built by
+   *  walking out from the anchor at `restAngle` degrees. */
+  segmentLength: number;
+  /** Initial pose direction, in degrees from straight down. 0 =
+   *  hangs down (gravity-aligned), 90 = points right, -90 = left,
+   *  180 = points up (e.g. a tail curving over the back). The chain
+   *  "rests" at this angle when no forces are active. */
+  restAngle: number;
+  /** Gravity acceleration in px/s². Zero = floats; ~600 reads as
+   *  noticeable weight; >2000 looks heavy / slow. */
+  gravity: number;
+  /** Air drag — fraction of velocity retained per second. 0.95 =
+   *  loose / wobbly, 0.7 = damped, 0.3 = stiff and quick to settle.
+   *  Different from a Spring modifier's per-frame damping; this is
+   *  framerate-independent. */
+  damping: number;
+  /** Constraint relaxation passes per frame. More iterations = more
+   *  rigid. 4 is good for most cases; 8+ for very stiff chains. */
+  iterations: number;
+  /** When true, each follower's rotation is set to the angle from
+   *  its anchor point toward the next chain point. Use for rigs
+   *  where each link sprite is drawn pointing "up" at rest — the
+   *  chain auto-orients each link along its current direction.
+   *  When false, the link's rotation comes from its base transform
+   *  + bindings + modifiers as normal. */
+  alignRotation: boolean;
+  /** Velocity-coupling strength. 0 = chain just trails behind
+   *  position changes (smooth, mushy); 1 = chain inherits the
+   *  anchor's full frame velocity each step (whippy, snappy). 0.4
+   *  is a reasonable default — feels alive without going crazy on
+   *  fast head turns. */
+  velocityCoupling: number;
+  /** Anchor offset from the leader sprite's world position, in
+   *  pixels (in the leader's local frame). Lets the chain hang
+   *  from a specific point on the sprite instead of the pivot —
+   *  e.g. a tail anchors at the back of the body, not center. */
+  anchorOffset: { x: number; y: number };
+}
+
+/** Default values for a fresh chain. Applied by the Properties UI
+ *  when the user enables the chain on a sprite for the first time. */
+export const DEFAULT_CHAIN_CONFIG: ChainConfig = {
+  links: [],
+  segmentLength: 60,
+  restAngle: 0,
+  gravity: 800,
+  damping: 0.85,
+  iterations: 4,
+  alignRotation: true,
+  velocityCoupling: 0.4,
+  anchorOffset: { x: 0, y: 0 },
+};
 
 /** Default-zero corner offsets, used when toggling 4-corner mode on
  *  for the first time. Exported so the Properties UI can reach for
@@ -351,7 +447,12 @@ export type BindingKind = "visibility" | "transform" | "pose";
  * transform with its parent sprite's world transform, producing world-space
  * values that subsequent modifiers (Spring/Drag/Sine) operate on.
  */
-export type ModifierType = "parent" | "spring" | "drag" | "sine";
+export type ModifierType =
+  | "parent"
+  | "spring"
+  | "drag"
+  | "sine"
+  | "pendulum";
 
 /**
  * Transform inheritance. Child's local transform is composed with parent's
@@ -406,11 +507,44 @@ export interface SineModifier {
   phase: number;
 }
 
+/**
+ * Gravity-aware angular spring. Like Spring but for sprite rotation
+ * specifically, with a constant gravitational restoring force and
+ * velocity-coupling from the parent's motion.
+ *
+ * Use case: a single dangling thing — earring, charm, antenna, a
+ * single ear flopping. The sprite swings naturally as if it had
+ * mass and was hanging from its anchor point. For multi-segment
+ * chains (hair, tail), use the sprite-level `chain` config instead
+ * — it does the same thing across N points with proper distance
+ * constraints between them.
+ *
+ *   restAngle  — degrees the sprite rests at (0 = down, hanging
+ *                from above; 180 = pointing up, mounted on a
+ *                bouncy stick).
+ *   gravity    — restoring acceleration toward restAngle, in
+ *                deg/s². ~600-1500 feels alive.
+ *   damping    — fraction of angular velocity retained per second.
+ *                0.85 = wobbly, 0.5 = stiff. Framerate-independent.
+ *   coupling   — how much of the parent's frame-to-frame movement
+ *                injects into the pendulum's velocity. 0 = pure
+ *                gravity-only, 1 = swings hard on parent motion.
+ */
+export interface PendulumModifier {
+  id: string;
+  type: "pendulum";
+  restAngle: number;
+  gravity: number;
+  damping: number;
+  coupling: number;
+}
+
 export type Modifier =
   | ParentModifier
   | SpringModifier
   | DragModifier
-  | SineModifier;
+  | SineModifier
+  | PendulumModifier;
 
 // ---------------------------------------------------------------- Animations
 

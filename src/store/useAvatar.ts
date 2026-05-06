@@ -7,8 +7,10 @@ import {
   AutoBlinkConfig,
   AvatarModel,
   Binding,
+  ChainConfig,
   DEFAULT_ANCHOR,
   DEFAULT_AUTO_BLINK_CONFIG,
+  DEFAULT_CHAIN_CONFIG,
   DEFAULT_KEYBOARD_CONFIG,
   DEFAULT_MIC_CONFIG,
   DEFAULT_TRANSFORM,
@@ -122,6 +124,17 @@ interface AvatarStore {
           bl?: { x?: number; y?: number };
           br?: { x?: number; y?: number };
         },
+  ) => void;
+  /** Set or patch a sprite's chain physics config. Pass undefined to
+   *  disable the chain entirely (drops the field; chain followers
+   *  return to their model transforms). Pass a partial config to
+   *  patch individual fields — missing fields keep their current
+   *  values, or fall back to DEFAULT_CHAIN_CONFIG when enabling for
+   *  the first time. The `links` array can be replaced wholesale or
+   *  patched via a separate setSpriteChainLinks action below. */
+  setSpriteChain: (
+    id: SpriteId,
+    patch: Partial<ChainConfig> | undefined,
   ) => void;
   addSprite: (sprite: Omit<Sprite, "id">) => SpriteId;
   removeSprite: (id: SpriteId) => void;
@@ -348,6 +361,41 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         sprites: state.model.sprites.map((s) =>
           s.id === id ? { ...s, visible } : s,
         ),
+      },
+    })),
+
+  setSpriteChain: (id, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== id) return s;
+          if (patch === undefined) {
+            // Disable: drop the field entirely. The chain simulator's
+            // pruneStaleState will clean up its physics state on the
+            // next tick; chain follower sprites return to their
+            // model transforms.
+            const next = { ...s };
+            delete next.chain;
+            return next;
+          }
+          // Merge patch onto current (or defaults). When enabling for
+          // the first time, every field defaults — but the user
+          // typically calls this with at least { links } populated.
+          const cur: ChainConfig = s.chain ?? DEFAULT_CHAIN_CONFIG;
+          const merged: ChainConfig = {
+            ...cur,
+            ...patch,
+            // anchorOffset is a nested object — merge field-wise so
+            // a partial { anchorOffset: { x: 5 } } doesn't drop
+            // anchorOffset.y.
+            anchorOffset: {
+              ...cur.anchorOffset,
+              ...(patch.anchorOffset ?? {}),
+            },
+          };
+          return { ...s, chain: merged };
+        }),
       },
     })),
 

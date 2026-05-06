@@ -21,10 +21,12 @@ import {
   type DragModifier,
   type ModifierTarget,
   type ParentModifier,
+  type PendulumModifier,
   type SineModifier,
   type Sprite,
   type SpringModifier,
 } from "../types/avatar";
+import { type ChainSimulator } from "./chainSimulator";
 
 export interface EffectiveTransform {
   x: number;
@@ -42,6 +44,18 @@ interface SpringState {
 
 interface DragState {
   current: number;
+}
+
+/** Pendulum keeps angle + angular velocity, plus the sprite's
+ *  previous-frame world position for velocity coupling (parent
+ *  motion → angular impulse). Re-uses the same id-keyed pattern as
+ *  Spring/Drag. */
+interface PendulumState {
+  angle: number;
+  angularVelocity: number;
+  prevWorldX: number;
+  prevWorldY: number;
+  initialized: boolean;
 }
 
 /**
@@ -73,10 +87,16 @@ function composeTransforms(
 export class ModifierRunner {
   private springStates = new Map<string, SpringState>();
   private dragStates = new Map<string, DragState>();
+  private pendulumStates = new Map<string, PendulumState>();
   /** Set by PixiApp before tick. baseTransform() reads tween overlays
    *  off it for every sprite (including parents reached via parent-
    *  modifier recursion) so animations land before modifier passes. */
   private animationRunner: AnimationRunner | null = null;
+  /** Set by PixiApp before tick. baseTransform() consults the
+   *  simulator for chain overrides — sprites that are followers of
+   *  a chain leader get their position (and optionally rotation)
+   *  driven by physics instead of their model transform. */
+  private chainSimulator: ChainSimulator | null = null;
   /** Pose-eval options for the current frame. PixiApp sets this in
    *  beginFrame to surface the actively-edited binding to the
    *  evaluator so its progress gets forced to 1 (live preview while
@@ -92,6 +112,16 @@ export class ModifierRunner {
    *  calls this once at construction. */
   setAnimationRunner(runner: AnimationRunner): void {
     this.animationRunner = runner;
+  }
+
+  /** Wire the chain physics simulator. PixiApp calls this once at
+   *  construction, then steps the simulator each frame BEFORE
+   *  evaluating sprite transforms (chain followers are leaves of
+   *  the dependency graph; their leaders evaluate first via the
+   *  parent-cycle-safe recursion in evaluate(), the chain steps
+   *  produce overrides, and follower evaluation reads them). */
+  setChainSimulator(sim: ChainSimulator): void {
+    this.chainSimulator = sim;
   }
 
   /** Call once at the start of each frame. `poseOpts` lets the caller
@@ -114,6 +144,9 @@ export class ModifierRunner {
     }
     for (const id of Array.from(this.dragStates.keys())) {
       if (!liveIds.has(id)) this.dragStates.delete(id);
+    }
+    for (const id of Array.from(this.pendulumStates.keys())) {
+      if (!liveIds.has(id)) this.pendulumStates.delete(id);
     }
   }
 
@@ -165,6 +198,18 @@ export class ModifierRunner {
           mod.property,
           this.applySine(mod, this.readProperty(result, mod.property), time),
         );
+      } else if (mod.type === "pendulum") {
+        // Pendulum needs the sprite's current world position (for
+        // velocity coupling) AND writes back to rotation, so it
+        // takes the full transform and returns just the new
+        // rotation. Velocity coupling reads `result.x/y` BEFORE
+        // we update them this frame — that's the parent's previous
+        // motion captured naturally by the pendulum state.
+        result = this.writeProperty(
+          result,
+          "rotation",
+          this.applyPendulum(mod, result.rotation, result.x, result.y, dt),
+        );
       }
     }
 
@@ -190,13 +235,37 @@ export class ModifierRunner {
     // smooth the combined target — a spring on rotation will cleanly
     // chase the summed value as it changes.
     const tween = this.animationRunner?.getOverlay(sprite.id).tweenOffsets ?? {};
+
+    // Chain physics override (sprite is a follower of a chain
+    // leader). When present, the chain-derived position REPLACES
+    // both the model's transform.x/y and any transform binding that
+    // would otherwise write x/y — those would just fight the
+    // physics. Pose offsets + animation tween offsets STILL stack
+    // additively on top, so reactive pose bindings + click-squash
+    // animations still work for chain followers.
+    //
+    // Rotation is conditional: when alignRotation is on, the
+    // chain provides a rotation that REPLACES the base rotation
+    // and binding rotation. When off, normal rotation pipeline.
+    // Pose / tween rotation always stack on top either way, since
+    // they're explicitly additive overlays.
+    const chainOverride = this.chainSimulator?.getOverride(sprite.id);
+
+    const baseX = chainOverride
+      ? chainOverride.x
+      : (overrides.x ?? sprite.transform.x);
+    const baseY = chainOverride
+      ? chainOverride.y
+      : (overrides.y ?? sprite.transform.y);
+    const baseRot =
+      chainOverride && chainOverride.rotation !== null
+        ? chainOverride.rotation
+        : (overrides.rotation ?? sprite.transform.rotation);
+
     return {
-      x: (overrides.x ?? sprite.transform.x) + (pose.x ?? 0) + (tween.x ?? 0),
-      y: (overrides.y ?? sprite.transform.y) + (pose.y ?? 0) + (tween.y ?? 0),
-      rotation:
-        (overrides.rotation ?? sprite.transform.rotation) +
-        (pose.rotation ?? 0) +
-        (tween.rotation ?? 0),
+      x: baseX + (pose.x ?? 0) + (tween.x ?? 0),
+      y: baseY + (pose.y ?? 0) + (tween.y ?? 0),
+      rotation: baseRot + (pose.rotation ?? 0) + (tween.rotation ?? 0),
       scaleX:
         (overrides.scaleX ?? sprite.transform.scaleX) +
         (pose.scaleX ?? 0) +
@@ -279,5 +348,83 @@ export class ModifierRunner {
       base +
       mod.amplitude * Math.sin(2 * Math.PI * mod.frequency * time + mod.phase)
     );
+  }
+
+  /**
+   * Gravity-aware angular pendulum. Combines:
+   *   - Hookean restoring force toward restAngle (always wants to
+   *     return to rest pose)
+   *   - Gravity-style restoring torque using sin(angle - rest):
+   *     small-angle behavior is linear, but for a true pendulum
+   *     the sin keeps the response physically correct at large
+   *     deflection (a 90°-flipped pendulum has zero gravity torque
+   *     instantaneously, like a real one).
+   *   - Velocity coupling: parent's frame-to-frame world motion
+   *     injects an angular impulse so the pendulum SWINGS when the
+   *     parent moves laterally — without coupling it would just
+   *     hang there during fast head movements, which feels dead.
+   *   - Framerate-independent damping via dampingPerStep =
+   *     damping^dt.
+   *
+   * The currentAngle param is the rotation the modifier loop hands
+   * us — typically `sprite.transform.rotation + bindings + previous
+   * modifiers`. We mostly ignore it during steady-state simulation
+   * (the pendulum has its own state), but seed our angle from it on
+   * first init so the rest pose matches whatever the user dialed
+   * in via the model.
+   */
+  private applyPendulum(
+    mod: PendulumModifier,
+    currentAngle: number,
+    worldX: number,
+    worldY: number,
+    dt: number,
+  ): number {
+    let state = this.pendulumStates.get(mod.id);
+    if (!state) {
+      state = {
+        angle: currentAngle,
+        angularVelocity: 0,
+        prevWorldX: worldX,
+        prevWorldY: worldY,
+        initialized: false,
+      };
+      this.pendulumStates.set(mod.id, state);
+    }
+    // Cap dt — a tab-resume can deliver 100ms+ which would explode
+    // the integrator. Same trick as the chain simulator.
+    const stepDt = Math.min(dt, 0.05);
+    if (stepDt <= 0) return state.angle;
+
+    // Velocity coupling: lateral parent motion creates angular
+    // impulse. We use horizontal motion (dx) → angular velocity
+    // (positive dx pushes the pendulum to swing leftward in screen
+    // coords, since rotation increases counter-clockwise after our
+    // degrees-to-radians convention). Vertical motion is ignored —
+    // a pendulum doesn't gain angle from the parent moving up/down.
+    const dx = state.initialized ? worldX - state.prevWorldX : 0;
+    state.prevWorldX = worldX;
+    state.prevWorldY = worldY;
+    state.initialized = true;
+    // Coupling factor of 0..1 maps to a tunable angular impulse.
+    // The 0.5 here is a magic-number scale — empirically a coupling
+    // of 1 with a 100px head-shake should produce a visible swing.
+    state.angularVelocity += dx * mod.coupling * 0.5;
+
+    // Restoring torque toward restAngle (gravity pendulum form).
+    // Wrap angleDiff to [-180, 180] for shortest-path return —
+    // otherwise a pendulum at 350° trying to return to 0° would
+    // swing the LONG way around instead of -10°.
+    const rawDiff = state.angle - mod.restAngle;
+    const wrappedDiff = ((rawDiff + 180) % 360 + 360) % 360 - 180;
+    const torque = -mod.gravity * Math.sin((wrappedDiff * Math.PI) / 180);
+    state.angularVelocity += torque * stepDt;
+
+    // Framerate-independent damping.
+    const dampingPerStep = Math.pow(mod.damping, stepDt);
+    state.angularVelocity *= dampingPerStep;
+
+    state.angle += state.angularVelocity * stepDt;
+    return state.angle;
   }
 }

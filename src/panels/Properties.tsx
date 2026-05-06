@@ -6,6 +6,7 @@ import {
   ListChecks,
   Plus,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 import { useAvatar } from "../store/useAvatar";
 import { useEditor } from "../store/useEditor";
@@ -27,14 +28,17 @@ import {
   isVisibilityBinding,
 } from "../bindings/evaluate";
 import {
+  DEFAULT_CHAIN_CONFIG,
   DEFAULT_SPRITE_SHEET,
   DEFAULT_TRANSFORM,
   type Anchor,
   type Animation,
+  type ChainConfig,
   type Modifier,
   type ModifierType,
   type PoseBinding,
   type Sprite,
+  type SpriteId,
   type SpriteSheet,
   type SpriteSheetLoopMode,
   type Transform,
@@ -108,6 +112,7 @@ export function Properties() {
   );
   const setSpriteSheet = useAvatar((s) => s.setSpriteSheet);
   const setSpriteClipBy = useAvatar((s) => s.setSpriteClipBy);
+  const setSpriteChain = useAvatar((s) => s.setSpriteChain);
   const addBinding = useAvatar((s) => s.addBinding);
   const removeBinding = useAvatar((s) => s.removeBinding);
   const updateBinding = useAvatar((s) => s.updateBinding);
@@ -287,6 +292,19 @@ export function Properties() {
           amplitude: 2,
           frequency: 0.5,
           phase: 0,
+        };
+        break;
+      case "pendulum":
+        // Defaults tuned to "feels alive on a 30°-radius head shake":
+        // rest at 0° (hanging down), moderate gravity, gentle damping,
+        // medium coupling. Users dial in per rig.
+        mod = {
+          id,
+          type: "pendulum",
+          restAngle: 0,
+          gravity: 800,
+          damping: 0.85,
+          coupling: 0.4,
         };
         break;
     }
@@ -514,6 +532,51 @@ export function Properties() {
           )}
       </CollapsibleSection>
 
+      <CollapsibleSection
+        id="chain"
+        title="Physics chain"
+        actions={
+          sprite.chain ? (
+            <button
+              className="tool-btn"
+              onClick={() => setSpriteChain(sprite.id, undefined)}
+              title="Disable chain physics on this sprite"
+            >
+              Disable
+            </button>
+          ) : (
+            <button
+              className="tool-btn"
+              onClick={() =>
+                setSpriteChain(sprite.id, { ...DEFAULT_CHAIN_CONFIG })
+              }
+              title="Enable chain physics on this sprite. Choose follower sprites to form the chain."
+            >
+              <Plus size={12} />
+              Enable
+            </button>
+          )
+        }
+      >
+        {sprite.chain ? (
+          <ChainConfigEditor
+            chain={sprite.chain}
+            spriteId={sprite.id}
+            allSprites={model.sprites}
+            onChange={(patch) => setSpriteChain(sprite.id, patch)}
+          />
+        ) : (
+          <p className="empty">
+            Off — sprite renders normally. Click <strong>Enable</strong>{" "}
+            to attach a verlet chain (hair, tail, ears, dangling
+            charms). This sprite becomes the anchor; pick follower
+            sprites to form the chain links. Each frame the chain
+            simulates with gravity, damping, and velocity coupling
+            from the anchor's motion.
+          </p>
+        )}
+      </CollapsibleSection>
+
       <CollapsibleSection id="bindings" title="Bindings">
         {/* Visibility — show / hide bindings + the Show On picker.
          *  Show On is the recommended entry point; the manual
@@ -676,6 +739,7 @@ export function Properties() {
               <option value="spring">Spring</option>
               <option value="drag">Drag</option>
               <option value="sine">Sine</option>
+              <option value="pendulum">Pendulum</option>
             </select>
             <button
               onClick={addNewModifier}
@@ -782,4 +846,201 @@ function computeFrameSize(
     };
   }
   return { w: asset.width, h: asset.height };
+}
+
+// ---------------------------------------------------------------- Chain editor
+
+/**
+ * Sub-panel rendered inside the Properties → Physics chain section
+ * when a chain is enabled. Manages the link list (add / remove /
+ * reorder) plus the physics parameters (segment length, gravity,
+ * damping, velocity coupling, anchor offset, alignRotation toggle).
+ *
+ * Kept as a separate component so the parent Properties panel
+ * stays scannable; the chain editor has enough state and inputs
+ * that inlining it would drown out the other sections.
+ */
+function ChainConfigEditor({
+  chain,
+  spriteId,
+  allSprites,
+  onChange,
+}: {
+  chain: ChainConfig;
+  spriteId: SpriteId;
+  allSprites: Sprite[];
+  onChange: (patch: Partial<ChainConfig>) => void;
+}) {
+  // Available follower sprites: everything except the anchor itself
+  // (a sprite can't be its own chain follower) and sprites already
+  // in the chain (a single sprite shouldn't be two links — the
+  // physics would fight itself). Filter is recomputed each render
+  // so adding/removing reflects immediately.
+  const linkSet = new Set(chain.links);
+  const availableFollowers = allSprites.filter(
+    (s) => s.id !== spriteId && !linkSet.has(s.id),
+  );
+
+  const addLink = (followerId: SpriteId): void => {
+    onChange({ links: [...chain.links, followerId] });
+  };
+  const removeLink = (idx: number): void => {
+    onChange({ links: chain.links.filter((_, i) => i !== idx) });
+  };
+  const moveLink = (idx: number, dir: -1 | 1): void => {
+    const next = [...chain.links];
+    const target = idx + dir;
+    if (target < 0 || target >= next.length) return;
+    [next[idx], next[target]] = [next[target]!, next[idx]!];
+    onChange({ links: next });
+  };
+
+  return (
+    <div className="chain-editor">
+      {/* Link list — ordered top-to-bottom from the anchor outward.
+          Each row: index, sprite name, up/down/remove buttons. */}
+      <div className="chain-links">
+        {chain.links.length === 0 ? (
+          <p className="empty">
+            No links yet. Pick a follower below to start the chain.
+          </p>
+        ) : (
+          chain.links.map((linkId, idx) => {
+            const linkSprite = allSprites.find((s) => s.id === linkId);
+            const label = linkSprite?.name ?? `(missing: ${linkId})`;
+            return (
+              <div className="chain-link-row" key={`${linkId}-${idx}`}>
+                <span className="chain-link-index">{idx + 1}.</span>
+                <span
+                  className={`chain-link-name ${linkSprite ? "" : "missing"}`}
+                >
+                  {label}
+                </span>
+                <button
+                  className="binding-delete"
+                  onClick={() => moveLink(idx, -1)}
+                  disabled={idx === 0}
+                  title="Move up in chain"
+                  aria-label="Move link up"
+                >
+                  ↑
+                </button>
+                <button
+                  className="binding-delete"
+                  onClick={() => moveLink(idx, 1)}
+                  disabled={idx === chain.links.length - 1}
+                  title="Move down in chain"
+                  aria-label="Move link down"
+                >
+                  ↓
+                </button>
+                <button
+                  className="binding-delete"
+                  onClick={() => removeLink(idx)}
+                  title="Remove from chain"
+                  aria-label="Remove link"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Add-follower picker. Selecting an option immediately appends
+          (no separate "Add" button — saves a click). The select
+          resets to "—" via the empty option being controlled to "". */}
+      {availableFollowers.length > 0 && (
+        <div className="chain-add-row">
+          <select
+            className="chain-add-picker"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addLink(e.target.value);
+            }}
+            title="Add a follower sprite as the next chain link"
+          >
+            <option value="">+ Add link…</option>
+            {availableFollowers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Physics parameters — stacked rows so labels line up. */}
+      <div className="prop-grid prop-grid-stacked">
+        <NumberField
+          label="Segment len"
+          value={chain.segmentLength}
+          onChange={(v) => onChange({ segmentLength: Math.max(1, v) })}
+          step={5}
+          precision={0}
+        />
+        <NumberField
+          label="Rest angle°"
+          value={chain.restAngle}
+          onChange={(v) => onChange({ restAngle: v })}
+          step={5}
+          precision={1}
+        />
+        <NumberField
+          label="Gravity"
+          value={chain.gravity}
+          onChange={(v) => onChange({ gravity: v })}
+          step={50}
+          precision={0}
+        />
+        <NumberField
+          label="Damping"
+          value={chain.damping}
+          onChange={(v) =>
+            onChange({ damping: Math.max(0, Math.min(1, v)) })
+          }
+          step={0.05}
+          precision={2}
+        />
+        <NumberField
+          label="Vel coupling"
+          value={chain.velocityCoupling}
+          onChange={(v) =>
+            onChange({ velocityCoupling: Math.max(0, Math.min(1, v)) })
+          }
+          step={0.05}
+          precision={2}
+        />
+        <NumberField
+          label="Anchor X"
+          value={chain.anchorOffset.x}
+          onChange={(v) => onChange({ anchorOffset: { x: v, y: chain.anchorOffset.y } })}
+          step={1}
+          precision={1}
+        />
+        <NumberField
+          label="Anchor Y"
+          value={chain.anchorOffset.y}
+          onChange={(v) => onChange({ anchorOffset: { x: chain.anchorOffset.x, y: v } })}
+          step={1}
+          precision={1}
+        />
+        <div className="prop-row">
+          <span className="prop-row-label">Align rot</span>
+          <label
+            className="prop-row-control chain-checkbox"
+            title="When on, each link auto-rotates to point along the chain (away from its predecessor). Useful for hair/tail strands drawn pointing 'up'. When off, link rotation comes from its own model + bindings."
+          >
+            <input
+              type="checkbox"
+              checked={chain.alignRotation}
+              onChange={(e) => onChange({ alignRotation: e.target.checked })}
+            />
+            <span>{chain.alignRotation ? "On" : "Off"}</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  );
 }

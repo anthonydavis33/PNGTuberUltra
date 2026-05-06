@@ -121,6 +121,7 @@ export const EDITOR_BG_HEX = "#1a1a1a";
 export const PLACEHOLDER_TEX_W = 120;
 export const PLACEHOLDER_TEX_H = 160;
 import { ModifierRunner, type EffectiveTransform } from "../modifiers/runner";
+import { ChainSimulator } from "../modifiers/chainSimulator";
 import { AnimationRunner } from "../animations/runner";
 import { getMouseSource } from "../inputs/MouseSource";
 import type { WheelZoomMode } from "../store/useSettings";
@@ -250,6 +251,11 @@ export class PixiApp {
   private wheelHandler: ((e: WheelEvent) => void) | null = null;
   private readonly animationRunner = new AnimationRunner();
   private readonly modifierRunner = new ModifierRunner();
+  /** Verlet chain physics. Stepped each frame BEFORE the per-sprite
+   *  evaluate loop so chain followers see the override map populated
+   *  when their baseTransform runs. Stateful across frames (point
+   *  positions persist for verlet integration). */
+  private readonly chainSimulator = new ChainSimulator();
   /** Wallclock time of the previous tick (in seconds), for dt computation. */
   private lastTickTime: number | null = null;
   /** When true, the per-frame ticker no-ops. Driven by PixiCanvas in
@@ -288,6 +294,9 @@ export class PixiApp {
     // Wire the animation runner into the modifier runner so tween
     // overlays land in baseTransform, before modifier passes run.
     this.modifierRunner.setAnimationRunner(this.animationRunner);
+    // Wire the chain simulator so chain-follower sprites get their
+    // physics-driven position overrides during baseTransform.
+    this.modifierRunner.setChainSimulator(this.chainSimulator);
     await this.app.init({
       background: EDITOR_BG_HEX,
       resizeTo: host,
@@ -936,6 +945,51 @@ export class PixiApp {
     // can read tween overlays via the wired animationRunner reference.
     this.animationRunner.beginFrame(sprites, dt, nowMs);
     this.modifierRunner.beginFrame(poseOpts);
+    this.chainSimulator.beginFrame();
+
+    // Step verlet chains BEFORE evaluating sprites — so when a chain
+    // follower's transform is computed below, the simulator's
+    // override map already has the physics-derived position for it.
+    //
+    // For each leader: evaluate its world transform (which recurses
+    // through any parent modifiers but does NOT depend on followers
+    // — chain dependency is leader→follower, never follower→leader),
+    // then step the chain. The leader's world position + rotation
+    // become the chain anchor; rotation is applied to the
+    // anchorOffset so the anchor tracks correctly when the leader
+    // rotates.
+    for (const ms of sprites) {
+      if (!ms.chain || ms.chain.links.length === 0) continue;
+      const leaderTransform = this.modifierRunner.evaluate(
+        ms,
+        sprites,
+        dt,
+        now,
+      );
+      const cfg = ms.chain;
+      // Anchor offset is in the leader's local frame; rotate into
+      // world frame using the leader's rotation.
+      const rotRad = (leaderTransform.rotation * Math.PI) / 180;
+      const cosR = Math.cos(rotRad);
+      const sinR = Math.sin(rotRad);
+      const anchorWorldX =
+        leaderTransform.x +
+        cfg.anchorOffset.x * cosR * leaderTransform.scaleX -
+        cfg.anchorOffset.y * sinR * leaderTransform.scaleY;
+      const anchorWorldY =
+        leaderTransform.y +
+        cfg.anchorOffset.x * sinR * leaderTransform.scaleX +
+        cfg.anchorOffset.y * cosR * leaderTransform.scaleY;
+      this.chainSimulator.step(
+        ms.id,
+        anchorWorldX,
+        anchorWorldY,
+        leaderTransform.rotation,
+        cfg,
+        dt,
+      );
+    }
+    this.chainSimulator.pruneStaleState(sprites);
 
     let selectedTransform: EffectiveTransform | null = null;
 
