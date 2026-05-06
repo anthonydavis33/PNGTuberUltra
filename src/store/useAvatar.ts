@@ -198,8 +198,30 @@ const COALESCE_MS = 250;
 /** Maximum number of past snapshots retained. Older ones get discarded. */
 const HISTORY_LIMIT = 50;
 
-let nextSpriteNum = 1;
-const genId = (): SpriteId => `sprite-${nextSpriteNum++}`;
+/**
+ * Generate a fresh sprite id for newly-added sprites. UUID-based for
+ * the same reason genAssetId is — a module-level counter starting at
+ * 1 doesn't see what's already in the loaded `.pnxr`, and sprites
+ * loaded from disk keep their saved ids verbatim. After loading a
+ * model with sprites `sprite-1` through `sprite-N`, the next
+ * Add Sprite / drag-drop would also produce `sprite-1`, putting two
+ * sprites with the same id in `model.sprites`.
+ *
+ * Symptoms when this hit:
+ *   - React: "Encountered two children with the same key, sprite-1"
+ *     in LayerTree (which keys by id).
+ *   - Pixi: `setChildIndex` throwing "index N out of bounds N" in
+ *     syncSprites — the spriteMap dedupes by id (the colliding
+ *     entries collapse to one Pixi display object) so the world
+ *     container has fewer children than the model has sprite
+ *     entries, and the z-order sync walks past the end.
+ *   - Net result: black canvas, can only recover by closing + reopen.
+ *
+ * UUID slice keeps ids readable in saved `.pnxr` files for grep
+ * debugging while making collisions astronomically unlikely. Pattern
+ * matches genAssetId, animation ids, binding ids, modifier ids, etc.
+ */
+const genId = (): SpriteId => `sprite-${crypto.randomUUID().slice(0, 8)}`;
 
 const placeholder: Sprite = {
   id: "sprite-placeholder",
