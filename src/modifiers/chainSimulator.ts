@@ -164,7 +164,19 @@ export class ChainSimulator {
     // is config.damping; per-step retention is damping^stepDt.
     // gravity * stepDt^2 is the standard verlet position-update term
     // for constant acceleration.
-    const dampingPerStep = Math.pow(config.damping, stepDt);
+    //
+    // Special-case damping <= 0: pow(0, dt) = 0, which would kill
+    // velocity instantly every frame and freeze the chain. Users
+    // intuitively expect damping=0 to mean "no damping at all" (the
+    // OPPOSITE of instant kill); we honor that by treating any value
+    // ≤ 0 as full velocity retention (perpetual swing). The dragged
+    // chain still settles via gravity finding equilibrium and the
+    // distance constraints, just without explicit drag. Without
+    // this guard, the difference between damping=0 (frozen) and
+    // damping=0.0001 (lively) is a discontinuous jump that no
+    // amount of slider precision can cross smoothly.
+    const dampingPerStep =
+      config.damping <= 0 ? 1 : Math.pow(config.damping, stepDt);
     const gravityStep = config.gravity * stepDt * stepDt;
     for (let i = 1; i < totalPoints; i++) {
       const p = state.points[i]!;

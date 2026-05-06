@@ -444,8 +444,12 @@ export class ModifierRunner {
     const torque = -mod.gravity * Math.sin((wrappedDiff * Math.PI) / 180);
     state.angularVelocity += torque * stepDt;
 
-    // Framerate-independent damping.
-    const dampingPerStep = Math.pow(mod.damping, stepDt);
+    // Framerate-independent damping. Same singularity guard as
+    // ChainSimulator: damping=0 means "no damping" (perpetual
+    // swing), not "instant kill" — pow(0, dt) would be a
+    // discontinuous freeze. Without this, the slider step from 0 to
+    // 0.05 jumps the pendulum from frozen to alive in one tick.
+    const dampingPerStep = mod.damping <= 0 ? 1 : Math.pow(mod.damping, stepDt);
     state.angularVelocity *= dampingPerStep;
 
     state.angle += state.angularVelocity * stepDt;

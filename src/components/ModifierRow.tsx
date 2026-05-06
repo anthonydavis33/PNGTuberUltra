@@ -263,12 +263,17 @@ export function ModifierRow({
           step={50}
           precision={0}
         />
-        <span className="modifier-param-label" title="Fraction of angular velocity retained per second. Higher (toward 1) = wobbly, lower = stiff.">damp</span>
+        <span
+          className="modifier-param-label"
+          title="Fraction of angular velocity retained per second. 0 = no damping (perpetual). 0.5 ≈ settles in ~1s. 0.85 ≈ settles in ~5s (default). 0.95 = very floaty. Step 0.02 so the lively-but-not-floaty range (0.7..0.9) is fine-tunable."
+        >
+          damp
+        </span>
         <NumberField
           label=""
           value={modifier.damping}
           onChange={(v) => onChange({ damping: v })}
-          step={0.05}
+          step={0.02}
           precision={2}
         />
         <span className="modifier-param-label" title="How much parent motion injects angular velocity. 0 = pure gravity-only; 1 = swings hard on parent motion.">coup</span>

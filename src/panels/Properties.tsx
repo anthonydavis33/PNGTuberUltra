@@ -1013,13 +1013,27 @@ function ChainConfigEditor({
           step={50}
           precision={0}
         />
+        {/*
+         * Damping is "fraction of velocity retained per second."
+         * Counter-intuitive but useful range:
+         *   0.00 → no damping (perpetual swing — runtime treats this
+         *          as a special case; otherwise pow(0, dt) would
+         *          freeze the chain instantly)
+         *   0.50 → settles in ~1s
+         *   0.85 → settles in ~5s (default — feels alive)
+         *   0.95 → settles in ~20s (very floaty)
+         *   1.00 → never settles (perpetual)
+         * Step 0.02 (was 0.05) so 0.85 → 0.87 → 0.89 is a
+         * single-tick fine adjustment instead of a 0.05 jump that
+         * skipped the sweet spot.
+         */}
         <NumberField
           label="Damping"
           value={chain.damping}
           onChange={(v) =>
             onChange({ damping: Math.max(0, Math.min(1, v)) })
           }
-          step={0.05}
+          step={0.02}
           precision={2}
         />
         <NumberField
