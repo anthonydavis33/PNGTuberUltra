@@ -2806,6 +2806,17 @@ html.transparent-bg #root {
   width: 320px;
 }
 
+/* YouTube popover mirrors the Twitch one in shape — same right-
+ * anchored corner since the YouTube gear sits next to it on the
+ * secondary row. The maintainer-setup branch is taller than Twitch's
+ * (Google's setup has more steps), so allow the popover to grow
+ * vertically with the content rather than fixing its height. */
+.youtube-popover {
+  left: auto;
+  right: 12px;
+  width: 360px;
+}
+
 .popover-label {
   display: block;
   font-size: 10px;

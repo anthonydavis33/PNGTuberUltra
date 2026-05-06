@@ -115,15 +115,29 @@ struct GlobalInputErrorPayload {
 /// arrives at our listener. `flow_id` is whatever the JS layer passed
 /// when starting the flow (e.g. "twitch", "youtube") — lets a single
 /// event channel multiplex multiple OAuth providers without confusion.
+///
+/// Two flow shapes share this payload:
+///   - Auth-code-with-PKCE (YouTube): `code` is set; the frontend
+///     exchanges it for tokens via the provider's token endpoint.
+///   - Implicit grant (Twitch — needed because Twitch doesn't support
+///     PKCE and we can't embed a client_secret in a desktop binary):
+///     `access_token` is set directly. No exchange step.
 #[derive(Clone, serde::Serialize)]
 struct OAuthCallbackPayload {
     #[serde(rename = "flowId")]
     flow_id: String,
-    /// Auth code from the redirect's `?code=...`. Present on success.
+    /// Auth code from `?code=...`. Set for the PKCE flow only.
     code: Option<String>,
+    /// Access token from `#access_token=...`. Set for implicit flow.
+    #[serde(rename = "accessToken")]
+    access_token: Option<String>,
     /// Anti-CSRF state parameter the frontend supplied — JS verifies
     /// it matches the value sent in the auth URL.
     state: Option<String>,
+    /// Space-delimited scope list the provider granted. Implicit
+    /// flow returns this in the fragment; useful for sanity-checking
+    /// the user actually accepted the scopes we asked for.
+    scope: Option<String>,
     /// OAuth `?error=...` parameter when the provider rejects the
     /// flow (user denied, scope problem, etc.).
     error: Option<String>,
@@ -363,41 +377,115 @@ fn extract_top_string(json: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Spawn a one-shot HTTP listener on OAUTH_CALLBACK_PORT to capture
-/// an OAuth provider's redirect. The frontend builds the auth URL with
-/// `redirect_uri=http://localhost:OAUTH_CALLBACK_PORT/oauth/callback`,
-/// opens it in the system browser, then calls this command to wait
-/// for the redirect. We block in a background thread (so this command
-/// returns immediately) and emit `oauth-callback` when the request
-/// arrives.
+/// HTML+JS shim served on GET /oauth/callback. Reads BOTH the URL
+/// query string (auth-code flow's `?code=...`) AND the URL fragment
+/// (implicit flow's `#access_token=...`) — fragments aren't sent to
+/// HTTP servers, so we need browser-side JS to extract them and POST
+/// the data back to the same URL where Rust can capture it.
 ///
-/// Why a separate listener and not a /oauth route on the existing
-/// stream server? Two reasons: (1) OAuth listeners want a short
-/// lifetime — they should shut down after the single expected
-/// redirect, both for cleanliness and so subsequent flows can reuse
-/// the port without race conditions, and (2) the stream server runs
-/// for the process lifetime and would have to maintain pending-flow
-/// state to multiplex callbacks; a one-shot dedicated listener is
-/// simpler.
+/// Unifying both flows through this shim keeps the Rust handler
+/// simple (one POST handler emits the event with whatever fields are
+/// present) and means future providers using either flow drop in
+/// without protocol changes.
+const OAUTH_CALLBACK_SHIM: &str = r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PNGTuberUltra — Connecting</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #1a1a1a;
+    color: #eee;
+    padding: 40px;
+    text-align: center;
+    margin: 0;
+  }
+  h2 { margin: 0 0 8px 0; }
+  .ok { color: #62d76b; }
+  .err { color: #ff5544; }
+  p { color: #888; margin: 8px 0; }
+</style>
+</head>
+<body>
+<h2 id="title">Connecting…</h2>
+<p id="message">Hold on, this should only take a moment.</p>
+<script>
+(async () => {
+  const titleEl = document.getElementById("title");
+  const msgEl = document.getElementById("message");
+  // Auth-code flow ships the code + state in the query string.
+  // Implicit flow ships access_token + state in the URL fragment
+  // (which the browser does NOT send to the server, so we read it
+  // here and POST it back). Merging both into one object lets Rust
+  // emit a single event regardless of flow type.
+  const data = {};
+  for (const [k, v] of new URLSearchParams(window.location.search).entries()) {
+    data[k] = v;
+  }
+  for (const [k, v] of new URLSearchParams(window.location.hash.slice(1)).entries()) {
+    data[k] = v;
+  }
+  if (data.error) {
+    titleEl.textContent = "Authorization failed";
+    titleEl.className = "err";
+    msgEl.textContent = data.error_description || data.error;
+    return;
+  }
+  try {
+    const resp = await fetch("/oauth/callback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    titleEl.textContent = "Connected";
+    titleEl.className = "ok";
+    msgEl.textContent = "You can close this tab and return to PNGTuberUltra.";
+    setTimeout(() => { try { window.close(); } catch (e) {} }, 1500);
+  } catch (e) {
+    titleEl.textContent = "Failed to relay token to PNGTuberUltra";
+    titleEl.className = "err";
+    msgEl.textContent = String(e && e.message ? e.message : e);
+  }
+})();
+</script>
+</body>
+</html>"#;
+
+/// Spawn a one-shot HTTP listener on OAUTH_CALLBACK_PORT to capture
+/// an OAuth provider's redirect. Two flow shapes are supported via a
+/// unified handler:
+///
+///   - Auth-code-with-PKCE (used by YouTube/Google): the redirect
+///     URL carries `?code=…&state=…` in the query string. The shim
+///     picks these up via window.location.search.
+///   - Implicit grant (used by Twitch — they don't support PKCE and
+///     embedding a client_secret in a desktop binary is unsafe): the
+///     redirect URL carries `#access_token=…&state=…` in the URL
+///     fragment. The shim picks these up via window.location.hash.
 ///
 /// Lifecycle:
-///   1. Frontend calls this command before opening the browser.
-///   2. Server binds, accepts one request, parses the query string.
-///   3. Sends a "you can close this tab" success page back to the
-///      browser.
-///   4. Emits `oauth-callback` with the parsed code/state/error.
-///   5. Server thread exits.
+///   1. Frontend calls start_oauth_callback_listener with a flow_id.
+///   2. Server binds and waits.
+///   3. User completes the provider's consent flow → browser
+///      redirects to http://localhost:47883/oauth/callback?... (or
+///      with #...).
+///   4. Server's GET handler returns OAUTH_CALLBACK_SHIM HTML.
+///   5. Shim parses both query and fragment, POSTs JSON back to
+///      /oauth/callback.
+///   6. Server's POST handler captures the body, extracts code /
+///      access_token / state / error, emits `oauth-callback`, and
+///      shuts down.
 ///
-/// If the user closes the browser without completing the flow, the
-/// frontend should call cancel_oauth_callback_listener — the listener
-/// thread polls a cancel flag and exits within ~500ms.
+/// If the user closes the browser without completing the flow,
+/// cancel_oauth_callback_listener flips a flag that the polling loop
+/// checks every 200ms.
 #[tauri::command]
 fn start_oauth_callback_listener(
     app: AppHandle,
     flow_id: String,
 ) -> Result<u16, String> {
-    // If a listener is already active for a previous flow, refuse —
-    // the user needs to either complete or cancel that one first.
     if OAUTH_LISTENER_PORT.load(Ordering::SeqCst) != 0 {
         return Err("oauth listener already active".into());
     }
@@ -417,7 +505,9 @@ fn start_oauth_callback_listener(
                     OAuthCallbackPayload {
                         flow_id: flow_id.clone(),
                         code: None,
+                        access_token: None,
                         state: None,
+                        scope: None,
                         error: Some("listener_bind_failed".into()),
                         error_description: Some(format!("{:?}", e)),
                     },
@@ -426,83 +516,77 @@ fn start_oauth_callback_listener(
             }
         };
 
-        // Poll with 200ms timeout so we can check the cancel flag and
-        // exit cleanly if the user backed out of the flow.
         loop {
             if OAUTH_LISTENER_CANCEL.load(Ordering::SeqCst) {
                 break;
             }
-            match server.recv_timeout(Duration::from_millis(200)) {
-                Ok(Some(request)) => {
-                    let url = request.url().to_string();
-                    let mut code: Option<String> = None;
-                    let mut state: Option<String> = None;
-                    let mut err: Option<String> = None;
-                    let mut err_desc: Option<String> = None;
-                    if let Some(qs_idx) = url.find('?') {
-                        let qs = &url[qs_idx + 1..];
-                        for pair in qs.split('&') {
-                            let mut parts = pair.splitn(2, '=');
-                            let k = parts.next().unwrap_or("");
-                            let v = parts.next().unwrap_or("");
-                            let v = url_decode(v);
-                            match k {
-                                "code" => code = Some(v),
-                                "state" => state = Some(v),
-                                "error" => err = Some(v),
-                                "error_description" => err_desc = Some(v),
-                                _ => {}
-                            }
-                        }
-                    }
+            let request = match server.recv_timeout(Duration::from_millis(200)) {
+                Ok(Some(r)) => r,
+                Ok(None) => continue,
+                Err(_) => break,
+            };
+            let method = request.method().clone();
+            let url = request.url().to_string();
+            let path = url.split('?').next().unwrap_or("");
 
-                    // Send a closeable success page back to the
-                    // browser — minimal HTML, no external assets,
-                    // styled enough to look intentional. Auto-closes
-                    // the tab after 1s on success.
-                    let body = if err.is_some() {
-                        format!(
-                            "<!doctype html><html><body style=\"font-family:system-ui;background:#1a1a1a;color:#eee;padding:40px;text-align:center;\">\
-                            <h2 style=\"color:#ff5544\">Authorization failed</h2>\
-                            <p>{}</p>\
-                            <p style=\"color:#888;font-size:14px\">You can close this tab and return to PNGTuberUltra.</p>\
-                            </body></html>",
-                            html_escape(err_desc.as_deref().unwrap_or("Unknown error"))
-                        )
-                    } else {
-                        "<!doctype html><html><body style=\"font-family:system-ui;background:#1a1a1a;color:#eee;padding:40px;text-align:center;\">\
-                        <h2 style=\"color:#62d76b\">Connected</h2>\
-                        <p>You can close this tab and return to PNGTuberUltra.</p>\
-                        <script>setTimeout(()=>window.close(),1500)</script>\
-                        </body></html>".to_string()
-                    };
-                    let html_header = Header::from_bytes(
-                        &b"Content-Type"[..],
-                        &b"text/html; charset=utf-8"[..],
-                    )
-                    .expect("static header parse");
-                    let _ = request.respond(
-                        Response::from_string(body).with_header(html_header),
-                    );
-
-                    let _ = app_handle.emit(
-                        "oauth-callback",
-                        OAuthCallbackPayload {
-                            flow_id: flow_id.clone(),
-                            code,
-                            state,
-                            error: err,
-                            error_description: err_desc,
-                        },
-                    );
-                    break;
-                }
-                Ok(None) => {
-                    // Timeout — loop again to check cancel flag.
-                    continue;
-                }
-                Err(_e) => break,
+            // GET /oauth/callback (and any sub-path) → serve the JS
+            // shim that reads query/fragment and POSTs back.
+            if matches!(method, Method::Get) && path.starts_with("/oauth/callback") {
+                let html_header = Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"text/html; charset=utf-8"[..],
+                )
+                .expect("static header parse");
+                let _ = request.respond(
+                    Response::from_string(OAUTH_CALLBACK_SHIM)
+                        .with_header(html_header),
+                );
+                // Don't break — keep waiting for the shim's POST.
+                continue;
             }
+
+            // POST /oauth/callback → shim is sending us the parsed
+            // params. This is the actual completion event.
+            if matches!(method, Method::Post) && path.starts_with("/oauth/callback") {
+                let mut body = String::new();
+                let mut request = request;
+                let _ = request.as_reader().read_to_string(&mut body);
+
+                let code = extract_top_string(&body, "code");
+                let access_token = extract_top_string(&body, "access_token");
+                let state = extract_top_string(&body, "state");
+                let scope = extract_top_string(&body, "scope");
+                let err = extract_top_string(&body, "error");
+                let err_desc = extract_top_string(&body, "error_description");
+
+                let json_header = Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"application/json"[..],
+                )
+                .expect("static header parse");
+                let _ = request.respond(
+                    Response::from_string("{\"ok\":true}").with_header(json_header),
+                );
+
+                let _ = app_handle.emit(
+                    "oauth-callback",
+                    OAuthCallbackPayload {
+                        flow_id: flow_id.clone(),
+                        code,
+                        access_token,
+                        state,
+                        scope,
+                        error: err,
+                        error_description: err_desc,
+                    },
+                );
+                break;
+            }
+
+            // Unknown route on this listener.
+            let _ = request.respond(
+                Response::from_string("Not found").with_status_code(404),
+            );
         }
         OAUTH_LISTENER_PORT.store(0, Ordering::SeqCst);
     });
@@ -515,44 +599,6 @@ fn start_oauth_callback_listener(
 #[tauri::command]
 fn cancel_oauth_callback_listener() {
     OAUTH_LISTENER_CANCEL.store(true, Ordering::SeqCst);
-}
-
-/// Minimal URL percent-decoding — handles %XX escapes and `+` → space
-/// (the standard form-encoded variant used by OAuth providers).
-/// Sufficient for OAuth query strings; not a general-purpose decoder.
-fn url_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("00");
-                let v = u8::from_str_radix(hex, 16).unwrap_or(0);
-                out.push(v);
-                i += 3;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Minimal HTML escaping for the OAuth success/error page. We only
-/// inject error_description into HTML; everything else is static.
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 /// Toggle global keyboard listening on/off.

@@ -346,18 +346,66 @@ export function StatusBar() {
   useEffect(() => {
     return getTwitchEventSubSource().subscribeConnection(setTwitchEventSubInfo);
   }, []);
-  const handleTwitchOAuthClick = (): void => {
-    const src = getTwitchEventSubSource();
+
+  // When EventSub is connected (either via fresh OAuth or by auto-
+  // restoring from saved tokens on launch), auto-mirror the user's
+  // login into the IRC chat channel and connect there too. This is
+  // why the popover only needs ONE "Connect with Twitch" button —
+  // OAuth implies the user wants their own channel monitored, and
+  // their login is exactly the IRC channel name. If they later want
+  // to monitor someone else's chat, the secondary "watch different
+  // channel" section overrides this.
+  useEffect(() => {
+    if (
+      twitchEventSubInfo.state === "connected" &&
+      twitchEventSubInfo.login
+    ) {
+      const login = twitchEventSubInfo.login;
+      setTwitchChannelSetting(login);
+      getTwitchChatSource().setChannel(login);
+    }
+  }, [twitchEventSubInfo.state, twitchEventSubInfo.login, setTwitchChannelSetting]);
+
+  /** Unified Twitch connect/disconnect — drives both OAuth (EventSub)
+   *  AND IRC chat as one user-facing action. The auto-mirror effect
+   *  above handles "OAuth → chat connect" once the login lands;
+   *  here we only need to kick off OAuth or tear both down. */
+  const handleTwitchUnifiedClick = (): void => {
+    const eventSub = getTwitchEventSubSource();
     if (
       twitchEventSubInfo.state === "connected" ||
       twitchEventSubInfo.state === "connecting" ||
       twitchEventSubInfo.state === "authorizing"
     ) {
-      src.disconnect();
+      // Disconnect both. EventSub clears its tokens; IRC drops the
+      // socket. The persisted channel name is cleared too so a
+      // restart doesn't silently reconnect to the previous account.
+      eventSub.disconnect();
+      getTwitchChatSource().setChannel(null);
+      setTwitchChannelSetting("");
     } else {
-      void src.connect();
+      void eventSub.connect();
     }
   };
+
+  /** Whether the user's current chat connection is to a *different*
+   *  channel than their OAuth login — i.e. they explicitly used the
+   *  secondary "watch a different channel" affordance. The unified
+   *  Connect button shouldn't claim to "disconnect everything" when
+   *  the user is also actively monitoring someone else's chat. */
+  const isWatchingOtherChannel =
+    twitchInfo.state === "connected" &&
+    !!twitchInfo.channel &&
+    twitchEventSubInfo.login !== null &&
+    twitchInfo.channel.toLowerCase() !==
+      twitchEventSubInfo.login.toLowerCase();
+
+  /** OAuth requires a registered Twitch Client ID. If the maintainer
+   *  hasn't filled it in (TWITCH_CLIENT_ID empty in source), surface
+   *  a clear setup-task message with a one-click link to the Twitch
+   *  dev console — this is a maintainer-only situation, not an
+   *  end-user one. */
+  const twitchOAuthConfigured = getTwitchEventSubSource().isConfigured();
   // YouTube Live Chat (OAuth + polling).
   const lastYtMessage = useInputValue<string | null>("YoutubeChatMessage");
   const lastYtUser = useInputValue<string | null>("YoutubeChatUser");
@@ -381,6 +429,13 @@ export function StatusBar() {
       void src.connect();
     }
   };
+  // YouTube popover open/close + configured-flag for the same
+  // maintainer-setup pattern Twitch uses. Without a Client ID
+  // baked into the source, the Connect button would just throw —
+  // surface a clear setup walkthrough instead.
+  const [showYoutubePopover, setShowYoutubePopover] = useState(false);
+  const youtubeOAuthConfigured = getYoutubeChatSource().isConfigured();
+
   // Webhook receiver — boolean active state + a generic event pulse
   // for the StatusBar readout.
   const lastWebhookEvent = useInputValue<string | null>("WebhookEvent");
@@ -483,6 +538,9 @@ export function StatusBar() {
           onClick={() => {
             setShowMicPopover((v) => !v);
             setShowKbPopover(false);
+            setShowCamPopover(false);
+            setShowTwitchPopover(false);
+            setShowYoutubePopover(false);
           }}
           title="Mic settings — thresholds, hold times, phoneme detection"
           aria-label="Mic settings"
@@ -582,6 +640,9 @@ export function StatusBar() {
           onClick={() => {
             setShowKbPopover((v) => !v);
             setShowMicPopover(false);
+            setShowCamPopover(false);
+            setShowTwitchPopover(false);
+            setShowYoutubePopover(false);
           }}
           title="Keyboard settings — regions, hotkeys"
           aria-label="Keyboard settings"
@@ -620,6 +681,8 @@ export function StatusBar() {
               setShowCamPopover((v) => !v);
               setShowMicPopover(false);
               setShowKbPopover(false);
+              setShowTwitchPopover(false);
+              setShowYoutubePopover(false);
             }}
             title="Webcam settings — calibration, smoothing"
             aria-label="Webcam settings"
@@ -830,6 +893,7 @@ export function StatusBar() {
               setShowMicPopover(false);
               setShowKbPopover(false);
               setShowCamPopover(false);
+              setShowYoutubePopover(false);
             }}
             aria-label="Twitch chat settings"
             title="Twitch chat settings"
@@ -851,7 +915,7 @@ export function StatusBar() {
           {showTwitchPopover && (
             <div className="settings-popover twitch-popover">
               <div className="settings-popover-header">
-                <h3>Twitch chat</h3>
+                <h3>Twitch</h3>
                 <button
                   className="popover-close"
                   onClick={() => setShowTwitchPopover(false)}
@@ -860,13 +924,157 @@ export function StatusBar() {
                   ×
                 </button>
               </div>
+
+              {/* Primary: one-click Connect with Twitch.
+                  OAuth (implicit grant) → token validate → login is
+                  auto-mirrored into the IRC chat channel by the
+                  useEffect above. So this single button connects BOTH
+                  chat AND EventSub events. */}
               <section className="popover-section">
-                <label className="popover-label">Channel name</label>
+                <label className="popover-label">Twitch account</label>
+                {!twitchOAuthConfigured ? (
+                  // Maintainer setup task — the project's Twitch dev
+                  // app Client ID isn't filled in yet. Show this
+                  // INSTEAD of a clickable Connect button so the
+                  // user (the dev) doesn't waste time clicking
+                  // something that can't possibly work, and doesn't
+                  // misinterpret an error message as an input field.
+                  <>
+                    <p className="popover-hint" style={{ marginTop: 0 }}>
+                      <strong>One-time maintainer setup:</strong>{" "}
+                      register a Twitch dev application to enable
+                      OAuth login for this build.
+                    </p>
+                    <ol
+                      className="popover-hint"
+                      style={{
+                        marginTop: 4,
+                        paddingLeft: 18,
+                      }}
+                    >
+                      <li>
+                        Open{" "}
+                        <a
+                          href="https://dev.twitch.tv/console/apps"
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "var(--accent)" }}
+                        >
+                          dev.twitch.tv/console/apps
+                        </a>{" "}
+                        and click "Register Your Application".
+                      </li>
+                      <li>
+                        OAuth Redirect URLs:{" "}
+                        <code>http://localhost:47883/oauth/callback</code>
+                      </li>
+                      <li>Category: Application Integration.</li>
+                      <li>
+                        Paste the resulting Client ID into{" "}
+                        <code>TWITCH_CLIENT_ID</code> in{" "}
+                        <code>src/inputs/TwitchEventSubSource.ts</code>{" "}
+                        and rebuild.
+                      </li>
+                    </ol>
+                    <p className="popover-hint">
+                      End users won't see this message once
+                      configured — the Connect button will work
+                      normally and pop the Twitch consent screen in
+                      the browser.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="popover-hint" style={{ marginTop: 0 }}>
+                      {twitchEventSubInfo.state === "connected" ? (
+                        <>
+                          Connected as <code>{twitchEventSubInfo.login}</code>
+                          {" — "}chat ✓ and channel-point / follow /
+                          raid events ✓
+                        </>
+                      ) : twitchEventSubInfo.state === "authorizing" ? (
+                        "Opening browser for authorization…"
+                      ) : twitchEventSubInfo.state === "connecting" ? (
+                        "Connecting to EventSub…"
+                      ) : twitchEventSubInfo.state === "error" ? (
+                        <span style={{ color: "var(--danger)" }}>
+                          {twitchEventSubInfo.error}
+                        </span>
+                      ) : (
+                        <>
+                          One click connects chat + the OAuth-only
+                          events (channel points, follows, raids).
+                          Opens your browser for the Twitch consent
+                          screen.
+                        </>
+                      )}
+                    </p>
+                    <div className="popover-button-row">
+                      <button
+                        type="button"
+                        onClick={handleTwitchUnifiedClick}
+                        disabled={
+                          twitchEventSubInfo.state === "authorizing" ||
+                          twitchEventSubInfo.state === "connecting"
+                        }
+                      >
+                        {twitchEventSubInfo.state === "connected"
+                          ? "Disconnect"
+                          : twitchEventSubInfo.state === "authorizing"
+                            ? "Authorizing…"
+                            : twitchEventSubInfo.state === "connecting"
+                              ? "Connecting…"
+                              : "Connect with Twitch"}
+                      </button>
+                    </div>
+                    <label className="popover-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={twitchAutoConnect}
+                        onChange={(e) =>
+                          setTwitchAutoConnect(e.target.checked)
+                        }
+                      />
+                      <span>Auto-connect on app start</span>
+                    </label>
+                  </>
+                )}
+              </section>
+
+              {/* Secondary: watch a DIFFERENT channel's chat. This is
+                  the read-only IRC fallback — useful when the user
+                  wants their avatar to react to a channel they don't
+                  own (e.g. monitoring a friend's stream for a
+                  collab). OAuth doesn't help here since EventSub
+                  events on someone else's channel require being a
+                  moderator of that channel. So this section only
+                  drives the IRC chat source — separate from the
+                  primary "your account" path above. */}
+              <section
+                className="popover-section"
+                style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}
+              >
+                <label className="popover-label">
+                  Or watch a different channel's chat
+                </label>
+                <p className="popover-hint" style={{ marginTop: 0 }}>
+                  Read-only anonymous IRC. Useful for monitoring
+                  someone else's stream while collabing. Channel-
+                  point / follow events stay tied to your own
+                  account above.
+                  {isWatchingOtherChannel && (
+                    <>
+                      {" "}
+                      Currently watching{" "}
+                      <code>#{twitchInfo.channel}</code>.
+                    </>
+                  )}
+                </p>
                 <input
                   type="text"
                   value={twitchInput}
                   onChange={(e) => setTwitchInput(e.target.value)}
-                  placeholder="e.g. ninja (without the #)"
+                  placeholder="channel name (without the #)"
                   className="popover-text-input"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleTwitchConnect();
@@ -878,71 +1086,19 @@ export function StatusBar() {
                     onClick={handleTwitchConnect}
                     disabled={!twitchInput.trim()}
                   >
-                    {twitchInfo.state === "connected" ? "Reconnect" : "Connect"}
+                    Watch chat
                   </button>
                   <button
                     type="button"
                     onClick={handleTwitchDisconnect}
-                    disabled={twitchInfo.state === "disconnected"}
-                  >
-                    Disconnect
-                  </button>
-                </div>
-                <label className="popover-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={twitchAutoConnect}
-                    onChange={(e) => setTwitchAutoConnect(e.target.checked)}
-                  />
-                  <span>Auto-connect on app start</span>
-                </label>
-                <p className="popover-hint">
-                  Read-only anonymous connection — no Twitch login
-                  needed. Publishes chat to{" "}
-                  <code>TwitchChatMessage</code>, !commands to{" "}
-                  <code>TwitchChatCommand</code>, cheers to{" "}
-                  <code>TwitchBits</code>, and subs to{" "}
-                  <code>TwitchSubscriber</code>.
-                </p>
-              </section>
-              <section
-                className="popover-section"
-                style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}
-              >
-                <label className="popover-label">
-                  Channel-point redemptions, follows, raids
-                </label>
-                <p className="popover-hint" style={{ marginTop: 0 }}>
-                  Requires authorizing PNGTuberUltra with your Twitch
-                  account (one click — opens browser).{" "}
-                  {twitchEventSubInfo.state === "connected" ? (
-                    <>
-                      Connected as <code>{twitchEventSubInfo.login}</code>.
-                    </>
-                  ) : twitchEventSubInfo.state === "error" ? (
-                    <span style={{ color: "var(--danger)" }}>
-                      {twitchEventSubInfo.error}
-                    </span>
-                  ) : (
-                    "Adds TwitchChannelPoint, TwitchFollow, TwitchRaid, and EventSub-only sub events."
-                  )}
-                </p>
-                <div className="popover-button-row">
-                  <button
-                    type="button"
-                    onClick={handleTwitchOAuthClick}
-                    disabled={
-                      twitchEventSubInfo.state === "authorizing" ||
-                      twitchEventSubInfo.state === "connecting"
+                    disabled={!isWatchingOtherChannel}
+                    title={
+                      isWatchingOtherChannel
+                        ? "Stop watching this channel's chat"
+                        : "Only the secondary chat connection — your account stays connected"
                     }
                   >
-                    {twitchEventSubInfo.state === "connected"
-                      ? "Disconnect OAuth"
-                      : twitchEventSubInfo.state === "authorizing"
-                        ? "Authorizing…"
-                        : twitchEventSubInfo.state === "connecting"
-                          ? "Connecting…"
-                          : "Connect with Twitch"}
+                    Stop watching
                   </button>
                 </div>
               </section>
@@ -950,29 +1106,36 @@ export function StatusBar() {
           )}
         </section>
 
-        {/* YouTube Live Chat — own section, own popover. Connect
-            triggers Google OAuth → token exchange → polling for the
-            user's active broadcast → chat message polling. */}
+        {/* YouTube Live Chat — popover-driven, mirroring the Twitch
+            pattern. Click the icon → popover opens with either
+            (a) maintainer setup instructions if YOUTUBE_CLIENT_ID
+            isn't filled in, or (b) Connect / Disconnect controls.
+            Direct icon-click connect was confusing when unconfigured
+            (just dumped an error to the section's tooltip); the
+            popover makes the setup task visible up front. */}
         <section
           className="status-section status-section-right"
           title={
             youtubeInfo.state === "polling"
-              ? `YouTube live chat: ${youtubeInfo.channelTitle ?? "connected"}\nClick the icon to disconnect.`
+              ? `YouTube live chat: ${youtubeInfo.channelTitle ?? "connected"}`
               : youtubeInfo.state === "waiting"
-                ? "YouTube authorized — waiting for an active broadcast. Go live and the source will pick up your chat automatically."
-                : youtubeInfo.state === "authorizing"
-                  ? "Authorizing with Google…"
-                  : youtubeInfo.state === "error"
-                    ? `YouTube error: ${youtubeInfo.error ?? "unknown"}\nClick to reconnect.`
-                    : "Click the icon to connect a YouTube account. Live chat, super chats, and new members become Youtube* channels in bindings."
+                ? "YouTube authorized — waiting for an active broadcast"
+                : youtubeInfo.state === "error"
+                  ? `YouTube error: ${youtubeInfo.error ?? "unknown"}`
+                  : "Click the icon for YouTube live chat settings"
           }
         >
           <button
             className={`status-gear ${youtubeInfo.state === "polling" ? "live" : ""}`}
-            onClick={handleYoutubeClick}
-            disabled={youtubeInfo.state === "authorizing"}
+            onClick={() => {
+              setShowYoutubePopover((v) => !v);
+              setShowMicPopover(false);
+              setShowKbPopover(false);
+              setShowCamPopover(false);
+              setShowTwitchPopover(false);
+            }}
             aria-label="YouTube live chat"
-            title="YouTube live chat"
+            title="YouTube live chat settings"
           >
             <CirclePlay size={14} />
           </button>
@@ -990,6 +1153,138 @@ export function StatusBar() {
               </span>
             </span>
           </div>
+          {showYoutubePopover && (
+            <div className="settings-popover youtube-popover">
+              <div className="settings-popover-header">
+                <h3>YouTube live chat</h3>
+                <button
+                  className="popover-close"
+                  onClick={() => setShowYoutubePopover(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <section className="popover-section">
+                <label className="popover-label">YouTube account</label>
+                {!youtubeOAuthConfigured ? (
+                  // Maintainer setup task — Google's flow is heftier
+                  // than Twitch (Cloud project + API enable + OAuth
+                  // consent screen) so the steps need to be a bit
+                  // more detailed. Same shape as the Twitch one
+                  // though: walk-through with a clickable link, no
+                  // placeholder Connect button to mislead.
+                  <>
+                    <p className="popover-hint" style={{ marginTop: 0 }}>
+                      <strong>One-time maintainer setup:</strong>{" "}
+                      enable the YouTube Data API and create an OAuth
+                      Client ID for this build.
+                    </p>
+                    <ol
+                      className="popover-hint"
+                      style={{ marginTop: 4, paddingLeft: 18 }}
+                    >
+                      <li>
+                        Open{" "}
+                        <a
+                          href="https://console.cloud.google.com/"
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "var(--accent)" }}
+                        >
+                          console.cloud.google.com
+                        </a>{" "}
+                        and create / pick a project.
+                      </li>
+                      <li>
+                        APIs &amp; Services → Library → enable{" "}
+                        <strong>YouTube Data API v3</strong>.
+                      </li>
+                      <li>
+                        OAuth consent screen → External, add scope{" "}
+                        <code>youtube.readonly</code>, add yourself
+                        as a test user while in test mode.
+                      </li>
+                      <li>
+                        Credentials → Create Credentials → OAuth
+                        client ID → Application type{" "}
+                        <strong>Desktop app</strong> (or Web app
+                        with the redirect below).
+                      </li>
+                      <li>
+                        Authorized redirect URIs (Web app type
+                        only):{" "}
+                        <code>http://localhost:47883/oauth/callback</code>
+                      </li>
+                      <li>
+                        Paste the Client ID into{" "}
+                        <code>YOUTUBE_CLIENT_ID</code> in{" "}
+                        <code>src/inputs/YoutubeChatSource.ts</code>{" "}
+                        and rebuild.
+                      </li>
+                    </ol>
+                    <p className="popover-hint">
+                      End users won't see this once configured — they
+                      just click Connect with YouTube and the consent
+                      screen pops in their browser.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="popover-hint" style={{ marginTop: 0 }}>
+                      {youtubeInfo.state === "polling" ? (
+                        <>
+                          Connected as{" "}
+                          <code>
+                            {youtubeInfo.channelTitle ?? "your channel"}
+                          </code>
+                          {" — "}live chat polling ✓
+                        </>
+                      ) : youtubeInfo.state === "waiting" ? (
+                        <>
+                          Authorized as{" "}
+                          <code>
+                            {youtubeInfo.channelTitle ?? "your channel"}
+                          </code>
+                          {" — "}waiting for an active broadcast. Go
+                          live and the source will pick up your chat
+                          automatically.
+                        </>
+                      ) : youtubeInfo.state === "authorizing" ? (
+                        "Opening browser for authorization…"
+                      ) : youtubeInfo.state === "error" ? (
+                        <span style={{ color: "var(--danger)" }}>
+                          {youtubeInfo.error}
+                        </span>
+                      ) : (
+                        <>
+                          One click connects your YouTube account.
+                          Adds <code>YoutubeChatMessage</code>,{" "}
+                          <code>YoutubeChatCommand</code>,{" "}
+                          <code>YoutubeSuperChat</code>, and{" "}
+                          <code>YoutubeMember</code> channels.
+                        </>
+                      )}
+                    </p>
+                    <div className="popover-button-row">
+                      <button
+                        type="button"
+                        onClick={handleYoutubeClick}
+                        disabled={youtubeInfo.state === "authorizing"}
+                      >
+                        {youtubeInfo.state === "polling" ||
+                        youtubeInfo.state === "waiting"
+                          ? "Disconnect"
+                          : youtubeInfo.state === "authorizing"
+                            ? "Authorizing…"
+                            : "Connect with YouTube"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </section>
+            </div>
+          )}
         </section>
 
         {/* Webhook receiver — universal external-event ingress. The

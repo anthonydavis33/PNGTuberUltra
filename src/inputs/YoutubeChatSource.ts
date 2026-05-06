@@ -57,7 +57,7 @@
 
 import { inputBus } from "./InputBus";
 import { useSettings } from "../store/useSettings";
-import { oauthFlow } from "./oauth";
+import { oauthCodeFlow } from "./oauth";
 
 /** Google OAuth Client ID. Maintainer fills this in. */
 const YOUTUBE_CLIENT_ID = "";
@@ -210,7 +210,7 @@ class YoutubeChatSource {
     this.intentionalDisconnect = false;
     this.setState("authorizing", null);
     try {
-      const result = await oauthFlow({
+      const result = await oauthCodeFlow({
         flowId: "youtube",
         authUrl: AUTH_URL,
         clientId: YOUTUBE_CLIENT_ID,

@@ -48,22 +48,34 @@
 //   They share the same status-bar section visually but operate
 //   independently at runtime.
 //
-// Token storage: access + refresh tokens live in localStorage via
-// useSettings. Refresh tokens for Twitch don't expire from inactivity
-// but DO get invalidated when the user clicks "disconnect" in their
-// Twitch settings — we handle 401s by clearing the stored tokens and
-// surfacing a "please reconnect" state.
+// Auth flow: implicit grant. Twitch's auth-code-grant flow requires
+// a client_secret, which we can't safely embed in a desktop binary
+// (anyone could extract it from the bundle). Twitch doesn't support
+// PKCE for public clients either — so the implicit grant flow is the
+// only safe option for desktop apps. Tokens come back directly in
+// the URL fragment, no exchange step. Tokens last ~60 days; when
+// expired, the user re-clicks Connect with Twitch.
+//
+// Token storage: access token in localStorage. No refresh token —
+// implicit flow doesn't issue one. We handle 401s by clearing the
+// stored token and surfacing a "please reconnect" state.
 //
 // Maintainer note on TWITCH_CLIENT_ID:
-//   Register a Twitch dev app at https://dev.twitch.tv/console/apps
-//   with redirect URI exactly `http://localhost:47883/oauth/callback`
-//   and category "Application Integration". Drop the Client ID below.
-//   The Client Secret is NOT needed (PKCE handles the auth code
-//   exchange securely from a desktop app).
+//   1. Visit https://dev.twitch.tv/console/apps and click
+//      "Register Your Application".
+//   2. Name: "PNGTuberUltra" (or anything you like).
+//   3. OAuth Redirect URLs: http://localhost:47883/oauth/callback
+//      (must match OAUTH_REDIRECT_URI exactly).
+//   4. Category: "Application Integration".
+//   5. Client Type: "Public" if available, else "Confidential" — we
+//      use the implicit flow either way and never send a secret.
+//   6. Save → copy the Client ID → paste below.
+//   No Client Secret is needed. End users never see anything about
+//   Client IDs once it's set.
 
 import { inputBus } from "./InputBus";
 import { useSettings } from "../store/useSettings";
-import { oauthFlow, OAUTH_REDIRECT_URI } from "./oauth";
+import { oauthImplicitFlow, OAUTH_REDIRECT_URI } from "./oauth";
 
 /** Twitch developer app Client ID. Maintainer fills this in after
  *  registering at dev.twitch.tv/console/apps. Empty string disables
@@ -89,7 +101,6 @@ const TWITCH_SCOPES = [
 ].join(" ");
 
 const AUTH_URL = "https://id.twitch.tv/oauth2/authorize";
-const TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const VALIDATE_URL = "https://id.twitch.tv/oauth2/validate";
 const HELIX_SUBSCRIPTIONS_URL =
   "https://api.twitch.tv/helix/eventsub/subscriptions";
@@ -136,11 +147,11 @@ export interface TwitchEventSubInfo {
 
 interface TwitchTokenSnapshot {
   accessToken: string;
-  refreshToken: string;
   userId: string;
   login: string;
-  /** Unix epoch ms — kept so we can refresh proactively before
-   *  expiry instead of waiting for a 401. */
+  /** Unix epoch ms — surfaced in the UI so users see when they'll
+   *  need to reconnect. Implicit flow doesn't give us refresh
+   *  tokens; this is a one-shot expiration. */
   expiresAt: number;
 }
 
@@ -226,41 +237,24 @@ class TwitchEventSubSource {
     this.intentionalDisconnect = false;
     this.setState("authorizing", null);
     try {
-      const result = await oauthFlow({
+      // Implicit grant: token comes back in the URL fragment; no
+      // exchange step. force_verify prompts the user even if they've
+      // already authorized — keeps "switch account" flows working
+      // for streamers with a personal + main account.
+      const result = await oauthImplicitFlow({
         flowId: "twitch",
         authUrl: AUTH_URL,
         clientId: TWITCH_CLIENT_ID,
         scope: TWITCH_SCOPES,
-        // force_verify: prompts the user even if they've already
-        // authorized — keeps "switch account" flows working for
-        // streamers who maintain a personal + main account.
         extraParams: { force_verify: "true" },
       });
-      const tokenResp = await fetch(TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: TWITCH_CLIENT_ID,
-          code: result.code,
-          code_verifier: result.codeVerifier,
-          grant_type: "authorization_code",
-          redirect_uri: result.redirectUri,
-        }).toString(),
-      });
-      if (!tokenResp.ok) {
-        const text = await tokenResp.text();
-        throw new Error(`Token exchange failed: ${tokenResp.status} ${text}`);
-      }
-      const tokenJson = (await tokenResp.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
 
-      // Validate to get user_id + login. Twitch requires this — the
-      // EventSub subscription condition uses broadcaster_user_id.
+      // Validate to get user_id + login + expires_in. Twitch's
+      // validate endpoint is the canonical way to derive these from
+      // an access token (the implicit grant fragment doesn't include
+      // them); EventSub subscription conditions use broadcaster_user_id.
       const validateResp = await fetch(VALIDATE_URL, {
-        headers: { Authorization: `OAuth ${tokenJson.access_token}` },
+        headers: { Authorization: `OAuth ${result.accessToken}` },
       });
       if (!validateResp.ok) {
         throw new Error(`Token validate failed: ${validateResp.status}`);
@@ -268,13 +262,13 @@ class TwitchEventSubSource {
       const validateJson = (await validateResp.json()) as {
         user_id: string;
         login: string;
+        expires_in: number;
       };
       this.tokens = {
-        accessToken: tokenJson.access_token,
-        refreshToken: tokenJson.refresh_token,
+        accessToken: result.accessToken,
         userId: validateJson.user_id,
         login: validateJson.login,
-        expiresAt: Date.now() + tokenJson.expires_in * 1000,
+        expiresAt: Date.now() + validateJson.expires_in * 1000,
       };
       saveStoredTokens(this.tokens);
       await this.connectWithTokens();
@@ -493,17 +487,13 @@ class TwitchEventSubSource {
       if (r.status === "fulfilled" && !r.value.ok) {
         const status = r.value.status;
         if (status === 401) {
-          // Token expired or revoked — try refreshing once.
-          const refreshed = await this.tryRefresh();
-          if (!refreshed) {
-            this.tokens = null;
-            clearStoredTokens();
-            this.setState("error", "Token expired — please reconnect");
-            this.disconnectSocket();
-            return;
-          }
-          // After refresh, just bail and let the next reconnect retry
-          // — keeps this code path simple.
+          // Token expired / revoked. Implicit-grant tokens aren't
+          // refreshable — drop everything and surface a clean
+          // "please reconnect" state. The user re-clicks Connect.
+          this.tokens = null;
+          clearStoredTokens();
+          this.setState("error", "Token expired — please reconnect");
+          this.disconnectSocket();
           return;
         }
         const text = await r.value.text();
@@ -516,39 +506,6 @@ class TwitchEventSubSource {
           r.reason,
         );
       }
-    }
-  }
-
-  /** Try to refresh the access token using the stored refresh token.
-   *  Returns true on success (tokens updated + persisted). */
-  private async tryRefresh(): Promise<boolean> {
-    if (!this.tokens) return false;
-    try {
-      const resp = await fetch(TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: TWITCH_CLIENT_ID,
-          grant_type: "refresh_token",
-          refresh_token: this.tokens.refreshToken,
-        }).toString(),
-      });
-      if (!resp.ok) return false;
-      const json = (await resp.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
-      this.tokens = {
-        ...this.tokens,
-        accessToken: json.access_token,
-        refreshToken: json.refresh_token,
-        expiresAt: Date.now() + json.expires_in * 1000,
-      };
-      saveStoredTokens(this.tokens);
-      return true;
-    } catch {
-      return false;
     }
   }
 

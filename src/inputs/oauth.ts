@@ -1,136 +1,177 @@
-// Shared OAuth 2.0 helper — drives the auth-code-with-PKCE flow used
-// by Twitch and YouTube. Both providers happen to land on the same
-// flow shape (browser → user grants → loopback redirect → token
-// exchange), and both work with the same redirect URI on a localhost
-// port owned by the Rust backend.
+// Shared OAuth 2.0 helper — supports two flow shapes that both land
+// on the same Rust callback listener:
 //
-// Pipeline:
-//   1. Frontend generates a random PKCE verifier + S256 challenge.
-//   2. Calls Rust `start_oauth_callback_listener` → returns the port
-//      a one-shot HTTP server is now bound to (currently fixed at
-//      47883; flow_id distinguishes concurrent providers, though
-//      practically only one flow runs at a time).
-//   3. Frontend opens the provider's auth URL in the system browser
-//      via `@tauri-apps/plugin-opener`. Provider sends the user
-//      through its consent UI then redirects to
-//      http://localhost:47883/oauth/callback?code=…&state=…
-//   4. Rust listener captures the request, sends a "you can close
-//      this tab" success page back to the browser, and emits an
-//      `oauth-callback` Tauri event with the parsed code/state.
-//   5. This module's `oauthFlow()` resolves with the code; caller
-//      exchanges it for tokens via direct fetch to the provider's
-//      token endpoint (PKCE means no client_secret is needed —
-//      essential for desktop apps that can't keep secrets).
+//   - Auth-code-with-PKCE (oauthCodeFlow): used by providers that
+//     properly support PKCE for public clients (YouTube/Google).
+//     Returns the authorization code; caller exchanges it for tokens.
 //
-// Why PKCE and not the implicit flow? Implicit flow returns the token
-// in the URL fragment, which is not sent to the redirect server (it's
-// a browser-only concept). Capturing it would require running JS on
-// the success page that POSTs the fragment back — workable but
-// fragile. Auth code with PKCE is the modern recommendation from
-// IETF (RFC 8252) anyway.
+//   - Implicit grant (oauthImplicitFlow): used by providers that
+//     DON'T support PKCE for public clients (Twitch). Returns the
+//     access_token directly — no exchange step. Tokens are not
+//     refreshable; users have to re-authorize when they expire.
+//
+// Both flows share the listener mechanics: Rust spawns a one-shot
+// HTTP listener on 127.0.0.1:47883, the browser hits /oauth/callback
+// after consent, our HTML+JS shim parses both the query string AND
+// the URL fragment, then POSTs the result back. Rust emits an
+// `oauth-callback` Tauri event regardless of which flow type was
+// used; this module dispatches based on which fields are present.
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 /** Redirect URI all OAuth flows redirect back to. Must match the
- *  value registered in each provider's developer console. The Rust
- *  side hard-codes the port in OAUTH_CALLBACK_PORT — they have to
- *  match. */
-export const OAUTH_REDIRECT_URI =
-  "http://localhost:47883/oauth/callback";
+ *  value registered in each provider's developer console verbatim. */
+export const OAUTH_REDIRECT_URI = "http://localhost:47883/oauth/callback";
 
 interface OAuthCallbackPayload {
   flowId: string;
   code: string | null;
+  accessToken: string | null;
   state: string | null;
+  scope: string | null;
   error: string | null;
   errorDescription: string | null;
 }
 
-interface OAuthFlowOptions {
-  /** Identifier passed to Rust + matched in the callback event payload.
-   *  Picks "twitch" or "youtube" — kept as an open string so future
-   *  providers don't require touching shared types. */
+interface BaseFlowOptions {
+  /** Identifier matched in callback events ("twitch", "youtube"). */
   flowId: string;
-  /** Provider's authorize endpoint, e.g.
-   *  "https://id.twitch.tv/oauth2/authorize" or
-   *  "https://accounts.google.com/o/oauth2/v2/auth". */
+  /** Provider's authorize endpoint. */
   authUrl: string;
-  /** OAuth client ID for this provider, registered by the project
-   *  maintainer (or overridden by the user via settings if they want
-   *  to use their own dev app). */
+  /** OAuth client ID (registered in the provider's dev console). */
   clientId: string;
-  /** Space-delimited scope list, e.g.
-   *  "channel:read:redemptions moderator:read:followers". */
+  /** Space-delimited scope list. */
   scope: string;
-  /** Extra query params to include on the auth URL. Useful for
-   *  provider-specific flags (Twitch's `force_verify`, Google's
-   *  `access_type=offline` for refresh tokens, etc.). */
+  /** Extra query params to include on the auth URL. */
   extraParams?: Record<string, string>;
-  /** Timeout in milliseconds before the flow rejects with a TIMEOUT
-   *  error. Default 5 minutes — long enough that users can read the
-   *  consent screen and check passwords, short enough that an
-   *  abandoned flow eventually frees the listener port. */
+  /** Reject after this many ms with a TIMEOUT error. Default 5min. */
   timeoutMs?: number;
 }
 
 export interface OAuthCodeResult {
   code: string;
   state: string;
-  /** PKCE verifier — caller must send this in the token-exchange POST
+  /** PKCE verifier — caller MUST send this in the token-exchange POST
    *  so the provider can verify it matches the challenge. */
   codeVerifier: string;
-  /** The exact redirect URI used — providers' token endpoints reject
-   *  the exchange unless it matches the auth-URL value byte-for-byte. */
+  /** Exact redirect URI used — providers' token endpoints reject the
+   *  exchange unless this matches the auth-URL value byte-for-byte. */
   redirectUri: string;
 }
 
-/**
- * Run an OAuth code-with-PKCE flow end-to-end. Resolves with the
- * authorization code (caller exchanges it for tokens) plus the PKCE
- * verifier + redirect URI that need to be sent in the token POST.
- * Rejects on user-cancel, timeout, or provider error.
- */
-export async function oauthFlow(
-  options: OAuthFlowOptions,
-): Promise<OAuthCodeResult> {
-  const { flowId, authUrl, clientId, scope, extraParams = {} } = options;
-  const timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+export interface OAuthTokenResult {
+  accessToken: string;
+  state: string;
+  /** Granted scopes (space-delimited or comma-separated depending on
+   *  provider). Useful for sanity-checking the user accepted what we
+   *  asked for. */
+  scope: string | null;
+}
 
-  // PKCE: 64 random bytes → base64url verifier → SHA-256 → base64url
-  // challenge. The challenge ships in the auth URL; the verifier
-  // stays local until the token exchange. RFC 7636 minimum verifier
-  // length is 43 chars; 64 raw bytes (86 chars base64url) is the
-  // practical recommendation.
+/**
+ * Auth-code-with-PKCE flow. Use for providers that support PKCE —
+ * notably Google/YouTube.
+ *
+ * Flow: builds auth URL with response_type=code + code_challenge,
+ * opens browser, waits for redirect, returns {code, codeVerifier}.
+ * Caller is responsible for exchanging the code for tokens via the
+ * provider's token endpoint (sending code_verifier in the body).
+ */
+export async function oauthCodeFlow(
+  options: BaseFlowOptions,
+): Promise<OAuthCodeResult> {
   const codeVerifier = randomBase64Url(64);
   const codeChallenge = await sha256Base64Url(codeVerifier);
   const state = randomBase64Url(16);
 
-  // Compose the auth URL.
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: clientId,
+    client_id: options.clientId,
     redirect_uri: OAUTH_REDIRECT_URI,
-    scope,
+    scope: options.scope,
     state,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
-    ...extraParams,
+    ...(options.extraParams ?? {}),
   });
-  const fullAuthUrl = `${authUrl}?${params.toString()}`;
 
-  // Wire up the Tauri callback listener BEFORE opening the browser —
-  // there's a tiny race window where a user could click through the
-  // consent screen faster than we set up the listener if we did this
-  // in the other order. Vanishingly unlikely, but free to prevent.
+  const payload = await runFlow(options, params, state);
+  if (!payload.code) {
+    throw new Error(
+      `OAuth ${options.flowId} returned without a code (got access_token=${
+        payload.accessToken ? "yes" : "no"
+      })`,
+    );
+  }
+  return {
+    code: payload.code,
+    state: payload.state!,
+    codeVerifier,
+    redirectUri: OAUTH_REDIRECT_URI,
+  };
+}
+
+/**
+ * Implicit-grant flow. Use for providers that DON'T support PKCE for
+ * public desktop clients — notably Twitch.
+ *
+ * Flow: builds auth URL with response_type=token, opens browser,
+ * waits for redirect, returns {accessToken} directly. No exchange
+ * step; the token is the result.
+ *
+ * Note: implicit flow doesn't return a refresh token. When the access
+ * token expires (Twitch tokens last ~60 days), the user has to
+ * re-authorize. Surface this clearly in the source's connection-state
+ * UI so users know what's going on when their session drops.
+ */
+export async function oauthImplicitFlow(
+  options: BaseFlowOptions,
+): Promise<OAuthTokenResult> {
+  const state = randomBase64Url(16);
+
+  const params = new URLSearchParams({
+    response_type: "token",
+    client_id: options.clientId,
+    redirect_uri: OAUTH_REDIRECT_URI,
+    scope: options.scope,
+    state,
+    ...(options.extraParams ?? {}),
+  });
+
+  const payload = await runFlow(options, params, state);
+  if (!payload.accessToken) {
+    throw new Error(
+      `OAuth ${options.flowId} returned without an access_token (got code=${
+        payload.code ? "yes" : "no"
+      })`,
+    );
+  }
+  return {
+    accessToken: payload.accessToken,
+    state: payload.state!,
+    scope: payload.scope,
+  };
+}
+
+/** Shared mechanics: open browser → wait for callback → return raw
+ *  payload. Both flows call this; the only difference is which fields
+ *  of the payload they read. */
+async function runFlow(
+  options: BaseFlowOptions,
+  params: URLSearchParams,
+  expectedState: string,
+): Promise<OAuthCallbackPayload> {
+  const timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+  const fullAuthUrl = `${options.authUrl}?${params.toString()}`;
+
   let unlisten: UnlistenFn | null = null;
   let timeoutHandle: number | null = null;
-  const result = new Promise<OAuthCodeResult>((resolve, reject) => {
+
+  const result = new Promise<OAuthCallbackPayload>((resolve, reject) => {
     let settled = false;
-    const finish = (
-      action: () => void,
-    ): void => {
+    const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
       if (unlisten) unlisten();
@@ -141,12 +182,12 @@ export async function oauthFlow(
 
     listen<OAuthCallbackPayload>("oauth-callback", (event) => {
       const payload = event.payload;
-      if (payload.flowId !== flowId) return; // not us
+      if (payload.flowId !== options.flowId) return;
       if (payload.error) {
         finish(() =>
           reject(
             new Error(
-              `OAuth ${flowId} error: ${payload.error}${
+              `OAuth ${options.flowId} error: ${payload.error}${
                 payload.errorDescription
                   ? ` — ${payload.errorDescription}`
                   : ""
@@ -156,58 +197,36 @@ export async function oauthFlow(
         );
         return;
       }
-      if (!payload.code) {
-        finish(() =>
-          reject(new Error(`OAuth ${flowId} returned without a code`)),
-        );
-        return;
-      }
-      // Anti-CSRF check: provider must echo back the state we sent.
-      if (payload.state !== state) {
+      if (payload.state !== expectedState) {
         finish(() =>
           reject(
             new Error(
-              `OAuth ${flowId} state mismatch — possible CSRF; refusing to proceed`,
+              `OAuth ${options.flowId} state mismatch — possible CSRF; refusing to proceed`,
             ),
           ),
         );
         return;
       }
-      finish(() =>
-        resolve({
-          code: payload.code!,
-          state: payload.state!,
-          codeVerifier,
-          redirectUri: OAUTH_REDIRECT_URI,
-        }),
-      );
+      finish(() => resolve(payload));
     })
       .then((fn) => {
         unlisten = fn;
       })
-      .catch((e) => {
-        finish(() => reject(e));
-      });
+      .catch((e) => finish(() => reject(e)));
 
     timeoutHandle = window.setTimeout(() => {
       finish(() =>
-        reject(new Error(`OAuth ${flowId} timed out after ${timeoutMs}ms`)),
+        reject(new Error(`OAuth ${options.flowId} timed out after ${timeoutMs}ms`)),
       );
     }, timeoutMs);
   });
 
-  // Spin up the Rust listener, then open the browser. If the listener
-  // fails to bind (port collision), Rust emits an error callback —
-  // the listener-promise above handles it.
-  await invoke("start_oauth_callback_listener", { flowId });
+  await invoke("start_oauth_callback_listener", { flowId: options.flowId });
   await openUrl(fullAuthUrl);
-
   return result;
 }
 
-/** Generate `n` random bytes and encode as base64url (RFC 4648 §5,
- *  trailing `=` padding stripped, `+`/`/` → `-`/`_`). Suitable for
- *  PKCE verifiers and OAuth state tokens. */
+/** Generate `n` random bytes encoded as base64url. */
 function randomBase64Url(byteLength: number): string {
   const bytes = new Uint8Array(byteLength);
   crypto.getRandomValues(bytes);
