@@ -121,6 +121,22 @@ interface SettingsState {
    *  flip this in the popover. */
   twitchAutoConnect: boolean;
   setTwitchAutoConnect: (enabled: boolean) => void;
+  /** Streaming-integration panel visibility — gates the Twitch /
+   *  YouTube / Webhook sections of the StatusBar. All default OFF
+   *  because these are streamer-specific features (most users won't
+   *  need them) and showing five extra icons by default crowds the
+   *  bottom row. Users opt in via the Settings popover under
+   *  "Streaming integrations". The underlying input sources still
+   *  initialize regardless — flipping these settings is purely
+   *  about whether the StatusBar shows the section, not whether
+   *  the channels publish. (Source-level on/off is handled by the
+   *  per-source connect buttons inside each popover.) */
+  showTwitchPanel: boolean;
+  setShowTwitchPanel: (enabled: boolean) => void;
+  showYoutubePanel: boolean;
+  setShowYoutubePanel: (enabled: boolean) => void;
+  showWebhookPanel: boolean;
+  setShowWebhookPanel: (enabled: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -157,6 +173,12 @@ export const useSettings = create<SettingsState>()(
       twitchAutoConnect: false,
       setTwitchAutoConnect: (enabled) =>
         set({ twitchAutoConnect: enabled }),
+      showTwitchPanel: false,
+      setShowTwitchPanel: (enabled) => set({ showTwitchPanel: enabled }),
+      showYoutubePanel: false,
+      setShowYoutubePanel: (enabled) => set({ showYoutubePanel: enabled }),
+      showWebhookPanel: false,
+      setShowWebhookPanel: (enabled) => set({ showWebhookPanel: enabled }),
     }),
     {
       // Versioned key so future schema bumps can migrate cleanly.

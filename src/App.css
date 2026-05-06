@@ -44,6 +44,14 @@ html.transparent-bg #root {
   display: grid;
   grid-template-rows: 36px 1fr auto;
   height: 100vh;
+  /* Cap to viewport width so the StatusBar (which has many sections
+   * stacked horizontally) can never push the layout wider than the
+   * window — that would force a horizontal scrollbar and visually
+   * "hide" the right-side Properties panel until the user scrolls.
+   * Combined with min-width: 0 on the editor row + status-bar, every
+   * child clips cleanly within the window. */
+  width: 100vw;
+  overflow: hidden;
 }
 
 /* Stream mode: hide all editor chrome, keep only the canvas. The
@@ -2094,6 +2102,16 @@ html.transparent-bg #root {
   font-size: 12px;
   user-select: none;
   position: relative;
+  /* min-width: 0 so the row's flex children can shrink past their
+   * intrinsic content width instead of forcing the whole bar wider
+   * than its grid cell (which would push the right-anchored
+   * sections off-screen and visually swallow the Properties
+   * panel above it). overflow-x: hidden is a belt-and-braces — the
+   * webcam values already have a mask-fade for overflow within the
+   * row, but in case a future section forgets that, this kills any
+   * accidental horizontal spill. */
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .status-bar-row {
@@ -2102,6 +2120,12 @@ html.transparent-bg #root {
   gap: 12px;
   padding: 0 12px;
   height: 32px;
+  /* Allow flex children to shrink past their intrinsic content size
+   * — without this a long chain of right-aligned sections (mic,
+   * keyboard, gamepad, midi, hr, twitch, youtube, webhook, mouse)
+   * would force the row wider than its cell, breaking the parent's
+   * overflow:hidden plan. */
+  min-width: 0;
 }
 
 .status-bar-row-secondary {

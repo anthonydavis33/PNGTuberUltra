@@ -296,6 +296,12 @@ export function StatusBar() {
   const setTwitchChannelSetting = useSettings((s) => s.setTwitchChannel);
   const twitchAutoConnect = useSettings((s) => s.twitchAutoConnect);
   const setTwitchAutoConnect = useSettings((s) => s.setTwitchAutoConnect);
+  // Streaming-integration panel visibility (toggled in the app
+  // settings popover). Default off so a fresh install isn't crowded
+  // with icons most users don't need; streamers turn them on once.
+  const showTwitchPanel = useSettings((s) => s.showTwitchPanel);
+  const showYoutubePanel = useSettings((s) => s.showYoutubePanel);
+  const showWebhookPanel = useSettings((s) => s.showWebhookPanel);
   const lastChatMessage = useInputValue<string | null>("TwitchChatMessage");
   const lastChatUser = useInputValue<string | null>("TwitchChatUser");
   const [twitchInfo, setTwitchInfo] = useState<TwitchConnectionInfo>({
@@ -873,7 +879,10 @@ export function StatusBar() {
             anonymous IRC connection is read-only; no OAuth required.
             EventSub-only events (channel.follow, channel point
             redemptions) need a future OAuth pass — chat-derived events
-            (subs, cheers, !commands, raw messages) work today. */}
+            (subs, cheers, !commands, raw messages) work today.
+            Hidden by default — toggle on under Settings → Streaming
+            integrations. */}
+        {showTwitchPanel && (
         <section
           className="status-section status-section-right"
           title={
@@ -1105,6 +1114,7 @@ export function StatusBar() {
             </div>
           )}
         </section>
+        )}
 
         {/* YouTube Live Chat — popover-driven, mirroring the Twitch
             pattern. Click the icon → popover opens with either
@@ -1112,7 +1122,10 @@ export function StatusBar() {
             isn't filled in, or (b) Connect / Disconnect controls.
             Direct icon-click connect was confusing when unconfigured
             (just dumped an error to the section's tooltip); the
-            popover makes the setup task visible up front. */}
+            popover makes the setup task visible up front.
+            Hidden by default — toggle on under Settings → Streaming
+            integrations. */}
+        {showYoutubePanel && (
         <section
           className="status-section status-section-right"
           title={
@@ -1286,11 +1299,15 @@ export function StatusBar() {
             </div>
           )}
         </section>
+        )}
 
         {/* Webhook receiver — universal external-event ingress. The
             Rust server is always listening at /webhook/event, so this
             section is read-only (no connect button). Shows last
-            received event for sanity-checking external bridges. */}
+            received event for sanity-checking external bridges.
+            Hidden by default — toggle on under Settings → Streaming
+            integrations. */}
+        {showWebhookPanel && (
         <section
           className="status-section status-section-right"
           title={
@@ -1316,6 +1333,7 @@ export function StatusBar() {
             </span>
           </div>
         </section>
+        )}
 
         {/* Mouse readout pinned to the bottom-right of the webcam row.
             Range -1..1 over the canvas; Y is up-positive (+1 top, -1

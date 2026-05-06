@@ -117,8 +117,99 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
       </section>
 
       <StreamingSection />
+      <StreamingIntegrationsSection />
       <PrivacySection />
     </div>
+  );
+}
+
+/** Toggles for showing the streaming-integration sections in the
+ *  StatusBar (Twitch, YouTube, Webhook). Default off because they're
+ *  streamer-specific and showing all five icons by default crowds
+ *  the bottom row for users who don't stream. Each toggle is purely
+ *  visual — flipping off doesn't disconnect the underlying source,
+ *  it just hides the StatusBar section. (Disconnect via the section's
+ *  popover before hiding if you want the source torn down too.) */
+function StreamingIntegrationsSection() {
+  const showTwitchPanel = useSettings((s) => s.showTwitchPanel);
+  const setShowTwitchPanel = useSettings((s) => s.setShowTwitchPanel);
+  const showYoutubePanel = useSettings((s) => s.showYoutubePanel);
+  const setShowYoutubePanel = useSettings((s) => s.setShowYoutubePanel);
+  const showWebhookPanel = useSettings((s) => s.showWebhookPanel);
+  const setShowWebhookPanel = useSettings((s) => s.setShowWebhookPanel);
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">Streaming integrations</div>
+      <div className="settings-section-desc">
+        Show the Twitch / YouTube / external-webhook icons in the
+        StatusBar. Hidden by default to keep the bottom strip clean
+        for users who don't stream — flip on whichever you actually
+        use. Channels still show up in binding pickers regardless.
+      </div>
+
+      <label
+        className={`settings-radio ${showTwitchPanel ? "active" : ""}`}
+        title="Show the Twitch icon in the StatusBar. Connect via the popover for chat (anonymous, no auth) and channel-point / follow / raid events (OAuth, requires the maintainer's TWITCH_CLIENT_ID)."
+      >
+        <input
+          type="checkbox"
+          checked={showTwitchPanel}
+          onChange={(e) => setShowTwitchPanel(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">Twitch</div>
+          <div className="settings-radio-hint">
+            Adds the Twitch icon to the StatusBar. Inside its
+            popover: anonymous chat (no login) plus optional OAuth
+            for channel-point redemptions, follows, raids, subs.
+          </div>
+        </div>
+      </label>
+
+      <label
+        className={`settings-radio ${showYoutubePanel ? "active" : ""}`}
+        title="Show the YouTube live chat icon in the StatusBar. Requires the maintainer's YOUTUBE_CLIENT_ID; connecting opens Google's consent flow in the browser."
+      >
+        <input
+          type="checkbox"
+          checked={showYoutubePanel}
+          onChange={(e) => setShowYoutubePanel(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">YouTube</div>
+          <div className="settings-radio-hint">
+            Adds the YouTube icon to the StatusBar. Connects via
+            Google OAuth and polls your active live broadcast for
+            chat, super chats, and member events.
+          </div>
+        </div>
+      </label>
+
+      <label
+        className={`settings-radio ${showWebhookPanel ? "active" : ""}`}
+        title="Show the webhook receiver icon in the StatusBar. The Rust HTTP server is always listening — this just controls whether the icon is visible. Used by TikTok bridges (tiktok-live-connector / TikTokLive), Streamer.bot, and custom scripts."
+      >
+        <input
+          type="checkbox"
+          checked={showWebhookPanel}
+          onChange={(e) => setShowWebhookPanel(e.target.checked)}
+        />
+        <div className="settings-radio-body">
+          <div className="settings-radio-label">
+            TikTok / external webhooks
+          </div>
+          <div className="settings-radio-hint">
+            Adds the webhook icon to the StatusBar. The receiver
+            (POST <code>http://localhost:47882/webhook/event</code>)
+            is always running; this toggle just shows the live
+            indicator. TikTok integration uses this — run a TikTok
+            Live bridge alongside PNGTuberUltra and POST events to
+            the URL.
+          </div>
+        </div>
+      </label>
+    </section>
   );
 }
 
