@@ -880,6 +880,13 @@ function ChainConfigEditor({
   const availableFollowers = allSprites.filter(
     (s) => s.id !== spriteId && !linkSet.has(s.id),
   );
+  // Distinguish "no other sprites exist in the rig" from "other
+  // sprites exist but none added to the chain yet" — same UI state
+  // (zero links) needs different empty-state copy. Without this
+  // split, users see "Pick a follower below" with no picker
+  // visible, which is exactly the dangling instruction we're
+  // fixing here.
+  const otherSpritesExist = allSprites.some((s) => s.id !== spriteId);
 
   const addLink = (followerId: SpriteId): void => {
     onChange({ links: [...chain.links, followerId] });
@@ -901,9 +908,21 @@ function ChainConfigEditor({
           Each row: index, sprite name, up/down/remove buttons. */}
       <div className="chain-links">
         {chain.links.length === 0 ? (
-          <p className="empty">
-            No links yet. Pick a follower below to start the chain.
-          </p>
+          otherSpritesExist ? (
+            <p className="empty">
+              No links yet. Pick a follower below to start the chain.
+            </p>
+          ) : (
+            // No candidates means the rig has only this one sprite —
+            // explicitly tell the user to add more sprites instead
+            // of leaving them staring at a missing picker.
+            <p className="empty">
+              No other sprites in the rig — add 2-5 hair / tail / ear
+              sprites first (drag image files onto the canvas, or use
+              <strong> Add Sprite </strong>in the layers panel), then
+              come back here to chain them.
+            </p>
+          )
         ) : (
           chain.links.map((linkId, idx) => {
             const linkSprite = allSprites.find((s) => s.id === linkId);
