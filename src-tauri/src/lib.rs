@@ -21,9 +21,10 @@
 //     it; no Tauri-side persistence.
 
 use rdev::{listen, Button, EventType, Key};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, Ordering};
+use std::sync::Mutex;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
@@ -59,6 +60,28 @@ static LAST_TICK_MS: AtomicI64 = AtomicI64::new(0);
 /// a URL the user can copy).
 const STREAM_PORT: u16 = 47882;
 
+/// Port for the OAuth callback listener. Spawned on-demand by the
+/// frontend when a user initiates an OAuth flow (Twitch / YouTube).
+/// Same port for both flows — they're never live concurrently. Picked
+/// from the dynamic port range and unlikely to collide.
+const OAUTH_CALLBACK_PORT: u16 = 47883;
+
+/// Active OAuth listener port — set when start_oauth_callback_listener
+/// runs, so a duplicate call returns early instead of trying to bind
+/// twice. 0 means no listener active.
+static OAUTH_LISTENER_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// Whether to cancel the active OAuth listener early (e.g. user
+/// closed the connect dialog before completing the flow).
+static OAUTH_LISTENER_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Storage for the most recent webhook event payload, keyed by event
+/// type. The frontend's WebhookSource subscribes via Tauri events;
+/// this Mutex<HashMap> is just a debug introspection point. Not
+/// load-bearing — the event channel is the primary delivery path.
+static LAST_WEBHOOK_EVENT: Mutex<Option<(String, String)>> =
+    Mutex::new(None);
+
 // stream/index.html embedded at compile time. Served by the
 // tiny_http server below.
 const STREAM_HTML: &str = include_str!("../stream/index.html");
@@ -86,6 +109,46 @@ struct GlobalMousePayload {
 #[derive(Clone, serde::Serialize)]
 struct GlobalInputErrorPayload {
     message: String,
+}
+
+/// Payload emitted to the frontend when an OAuth callback redirect
+/// arrives at our listener. `flow_id` is whatever the JS layer passed
+/// when starting the flow (e.g. "twitch", "youtube") — lets a single
+/// event channel multiplex multiple OAuth providers without confusion.
+#[derive(Clone, serde::Serialize)]
+struct OAuthCallbackPayload {
+    #[serde(rename = "flowId")]
+    flow_id: String,
+    /// Auth code from the redirect's `?code=...`. Present on success.
+    code: Option<String>,
+    /// Anti-CSRF state parameter the frontend supplied — JS verifies
+    /// it matches the value sent in the auth URL.
+    state: Option<String>,
+    /// OAuth `?error=...` parameter when the provider rejects the
+    /// flow (user denied, scope problem, etc.).
+    error: Option<String>,
+    /// Human-readable error description from the provider.
+    #[serde(rename = "errorDescription")]
+    error_description: Option<String>,
+}
+
+/// Payload emitted when the generic /webhook endpoint receives a POST.
+/// The frontend WebhookSource subscribes to this and decodes the
+/// JSON body into bus channels. Decoupled from any specific provider:
+/// TikTok bridges, Streamer.bot, custom Python scripts — anything that
+/// can POST JSON works.
+#[derive(Clone, serde::Serialize)]
+struct WebhookEventPayload {
+    /// Source identifier from `X-Source` header or body's `source` field.
+    /// Examples: "tiktok", "streamerbot", "custom".
+    source: String,
+    /// Event type from `X-Event` header or body's `event` field.
+    /// Examples: "chat", "gift", "follow".
+    event: String,
+    /// Raw JSON body as a string — frontend parses for richer fields.
+    /// Kept opaque on the Rust side to avoid coupling to any provider's
+    /// schema.
+    body: String,
 }
 
 #[tauri::command]
@@ -118,19 +181,25 @@ fn record_tick_heartbeat() {
 }
 
 /// Spawn the OBS browser source HTTP server. Binds 127.0.0.1:STREAM_PORT
-/// and serves three routes:
-///   GET /              → stream.html (embedded)
-///   GET /heartbeat     → JSON { lastTickMs: number } so the page can
-///                        show connection status
-///   anything else      → 404
+/// and serves several routes:
+///   GET  /               → stream.html (embedded)
+///   GET  /heartbeat      → JSON { lastTickMs: number } so the page can
+///                          show connection status
+///   POST /webhook/event  → external event ingress. Body: JSON.
+///                          Headers: X-Source (provider name), X-Event
+///                          (event type). Falls back to body's
+///                          `source` / `event` fields if headers are
+///                          absent. Emits a `webhook-event` Tauri
+///                          event the frontend's WebhookSource picks
+///                          up. Used by external bridges (TikTok Live
+///                          Connector, Streamer.bot, custom scripts).
+///   anything else        → 404
 ///
 /// Server runs in a dedicated thread for the lifetime of the process.
 /// On bind failure (port taken, etc.) we log and continue — the
-/// editor still works without the OBS source. Future iterations:
-/// WebSocket /ws for live state push, /asset/{id} for sprite texture
-/// serving, /model.json for current avatar model.
-fn spawn_stream_server() {
-    thread::spawn(|| {
+/// editor still works without the OBS source.
+fn spawn_stream_server(app: AppHandle) {
+    thread::spawn(move || {
         let addr = format!("127.0.0.1:{}", STREAM_PORT);
         let server = match Server::http(&addr) {
             Ok(s) => s,
@@ -145,16 +214,66 @@ fn spawn_stream_server() {
         };
         eprintln!("[stream-server] listening on http://{}", addr);
 
-        for request in server.incoming_requests() {
-            // Only GET. Anything else gets 405.
-            if !matches!(request.method(), Method::Get) {
+        for mut request in server.incoming_requests() {
+            let method = request.method().clone();
+            let url = request.url().to_string();
+            // POST /webhook/event — external event ingress for TikTok
+            // bridges, Streamer.bot, custom scripts. Read the body
+            // first (otherwise we can't move past the request),
+            // pull headers, then emit + respond.
+            if matches!(method, Method::Post) && url.starts_with("/webhook/event")
+            {
+                let mut body = String::new();
+                let _ = request.as_reader().read_to_string(&mut body);
+                let mut source: Option<String> = None;
+                let mut event: Option<String> = None;
+                for h in request.headers() {
+                    let name = h.field.as_str().as_str().to_lowercase();
+                    if name == "x-source" {
+                        source = Some(h.value.as_str().to_string());
+                    } else if name == "x-event" {
+                        event = Some(h.value.as_str().to_string());
+                    }
+                }
+                // Header-less payloads can carry source/event in the
+                // body — try a best-effort parse for top-level keys
+                // without bringing in a JSON dep on the Rust side.
+                if source.is_none() {
+                    source = extract_top_string(&body, "source");
+                }
+                if event.is_none() {
+                    event = extract_top_string(&body, "event");
+                }
+
+                let payload = WebhookEventPayload {
+                    source: source.unwrap_or_else(|| "unknown".to_string()),
+                    event: event.unwrap_or_else(|| "event".to_string()),
+                    body: body.clone(),
+                };
+                if let Ok(mut last) = LAST_WEBHOOK_EVENT.lock() {
+                    *last = Some((payload.event.clone(), body));
+                }
+                let _ = app.emit("webhook-event", payload);
+
+                let json_header = Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"application/json"[..],
+                )
+                .expect("static header parse");
+                let _ = request.respond(
+                    Response::from_string("{\"ok\":true}").with_header(json_header),
+                );
+                continue;
+            }
+
+            // Everything else is GET-only.
+            if !matches!(method, Method::Get) {
                 let _ = request.respond(
                     Response::from_string("Method not allowed").with_status_code(405),
                 );
                 continue;
             }
 
-            let url = request.url().to_string();
             let response = if url == "/" || url == "/index.html" {
                 let html_header = Header::from_bytes(
                     &b"Content-Type"[..],
@@ -184,6 +303,256 @@ fn spawn_stream_server() {
             let _ = request.respond(response);
         }
     });
+}
+
+/// Extract a top-level string field from a JSON body without bringing
+/// in a JSON dependency on the Rust side. Naive: looks for
+/// `"key"\s*:\s*"value"` and returns value with simple unescaping.
+/// Sufficient for the webhook header-fallback use case (we only need
+/// `source` and `event` strings); frontend does the real JSON parsing.
+fn extract_top_string(json: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{}\"", key);
+    let start = json.find(&needle)?;
+    let after_key = &json[start + needle.len()..];
+    // Skip whitespace + ':' + whitespace, then expect '"'.
+    let mut chars = after_key.char_indices();
+    let mut found_colon = false;
+    let mut value_start: Option<usize> = None;
+    while let Some((i, c)) = chars.next() {
+        if !found_colon {
+            if c == ':' {
+                found_colon = true;
+            } else if !c.is_whitespace() {
+                return None;
+            }
+        } else {
+            if c == '"' {
+                value_start = Some(i + 1);
+                break;
+            } else if !c.is_whitespace() {
+                return None;
+            }
+        }
+    }
+    let value_start = value_start?;
+    // Walk forward to closing quote, respecting backslash-escaped quotes.
+    let bytes = after_key.as_bytes();
+    let mut i = value_start;
+    let mut out = String::new();
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'"' {
+            return Some(out);
+        }
+        if b == b'\\' && i + 1 < bytes.len() {
+            let next = bytes[i + 1];
+            match next {
+                b'"' => out.push('"'),
+                b'\\' => out.push('\\'),
+                b'n' => out.push('\n'),
+                b't' => out.push('\t'),
+                b'/' => out.push('/'),
+                _ => out.push(next as char),
+            }
+            i += 2;
+        } else {
+            out.push(b as char);
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Spawn a one-shot HTTP listener on OAUTH_CALLBACK_PORT to capture
+/// an OAuth provider's redirect. The frontend builds the auth URL with
+/// `redirect_uri=http://localhost:OAUTH_CALLBACK_PORT/oauth/callback`,
+/// opens it in the system browser, then calls this command to wait
+/// for the redirect. We block in a background thread (so this command
+/// returns immediately) and emit `oauth-callback` when the request
+/// arrives.
+///
+/// Why a separate listener and not a /oauth route on the existing
+/// stream server? Two reasons: (1) OAuth listeners want a short
+/// lifetime — they should shut down after the single expected
+/// redirect, both for cleanliness and so subsequent flows can reuse
+/// the port without race conditions, and (2) the stream server runs
+/// for the process lifetime and would have to maintain pending-flow
+/// state to multiplex callbacks; a one-shot dedicated listener is
+/// simpler.
+///
+/// Lifecycle:
+///   1. Frontend calls this command before opening the browser.
+///   2. Server binds, accepts one request, parses the query string.
+///   3. Sends a "you can close this tab" success page back to the
+///      browser.
+///   4. Emits `oauth-callback` with the parsed code/state/error.
+///   5. Server thread exits.
+///
+/// If the user closes the browser without completing the flow, the
+/// frontend should call cancel_oauth_callback_listener — the listener
+/// thread polls a cancel flag and exits within ~500ms.
+#[tauri::command]
+fn start_oauth_callback_listener(
+    app: AppHandle,
+    flow_id: String,
+) -> Result<u16, String> {
+    // If a listener is already active for a previous flow, refuse —
+    // the user needs to either complete or cancel that one first.
+    if OAUTH_LISTENER_PORT.load(Ordering::SeqCst) != 0 {
+        return Err("oauth listener already active".into());
+    }
+    OAUTH_LISTENER_CANCEL.store(false, Ordering::SeqCst);
+    OAUTH_LISTENER_PORT.store(OAUTH_CALLBACK_PORT, Ordering::SeqCst);
+
+    let app_handle = app.clone();
+    thread::spawn(move || {
+        let addr = format!("127.0.0.1:{}", OAUTH_CALLBACK_PORT);
+        let server = match Server::http(&addr) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[oauth] failed to bind {}: {:?}", addr, e);
+                OAUTH_LISTENER_PORT.store(0, Ordering::SeqCst);
+                let _ = app_handle.emit(
+                    "oauth-callback",
+                    OAuthCallbackPayload {
+                        flow_id: flow_id.clone(),
+                        code: None,
+                        state: None,
+                        error: Some("listener_bind_failed".into()),
+                        error_description: Some(format!("{:?}", e)),
+                    },
+                );
+                return;
+            }
+        };
+
+        // Poll with 200ms timeout so we can check the cancel flag and
+        // exit cleanly if the user backed out of the flow.
+        loop {
+            if OAUTH_LISTENER_CANCEL.load(Ordering::SeqCst) {
+                break;
+            }
+            match server.recv_timeout(Duration::from_millis(200)) {
+                Ok(Some(request)) => {
+                    let url = request.url().to_string();
+                    let mut code: Option<String> = None;
+                    let mut state: Option<String> = None;
+                    let mut err: Option<String> = None;
+                    let mut err_desc: Option<String> = None;
+                    if let Some(qs_idx) = url.find('?') {
+                        let qs = &url[qs_idx + 1..];
+                        for pair in qs.split('&') {
+                            let mut parts = pair.splitn(2, '=');
+                            let k = parts.next().unwrap_or("");
+                            let v = parts.next().unwrap_or("");
+                            let v = url_decode(v);
+                            match k {
+                                "code" => code = Some(v),
+                                "state" => state = Some(v),
+                                "error" => err = Some(v),
+                                "error_description" => err_desc = Some(v),
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    // Send a closeable success page back to the
+                    // browser — minimal HTML, no external assets,
+                    // styled enough to look intentional. Auto-closes
+                    // the tab after 1s on success.
+                    let body = if err.is_some() {
+                        format!(
+                            "<!doctype html><html><body style=\"font-family:system-ui;background:#1a1a1a;color:#eee;padding:40px;text-align:center;\">\
+                            <h2 style=\"color:#ff5544\">Authorization failed</h2>\
+                            <p>{}</p>\
+                            <p style=\"color:#888;font-size:14px\">You can close this tab and return to PNGTuberUltra.</p>\
+                            </body></html>",
+                            html_escape(err_desc.as_deref().unwrap_or("Unknown error"))
+                        )
+                    } else {
+                        "<!doctype html><html><body style=\"font-family:system-ui;background:#1a1a1a;color:#eee;padding:40px;text-align:center;\">\
+                        <h2 style=\"color:#62d76b\">Connected</h2>\
+                        <p>You can close this tab and return to PNGTuberUltra.</p>\
+                        <script>setTimeout(()=>window.close(),1500)</script>\
+                        </body></html>".to_string()
+                    };
+                    let html_header = Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"text/html; charset=utf-8"[..],
+                    )
+                    .expect("static header parse");
+                    let _ = request.respond(
+                        Response::from_string(body).with_header(html_header),
+                    );
+
+                    let _ = app_handle.emit(
+                        "oauth-callback",
+                        OAuthCallbackPayload {
+                            flow_id: flow_id.clone(),
+                            code,
+                            state,
+                            error: err,
+                            error_description: err_desc,
+                        },
+                    );
+                    break;
+                }
+                Ok(None) => {
+                    // Timeout — loop again to check cancel flag.
+                    continue;
+                }
+                Err(_e) => break,
+            }
+        }
+        OAUTH_LISTENER_PORT.store(0, Ordering::SeqCst);
+    });
+    Ok(OAUTH_CALLBACK_PORT)
+}
+
+/// Cancel an in-flight OAuth listener. Safe to call even if no
+/// listener is active (no-op). Used when the user closes the connect
+/// dialog before completing the browser flow.
+#[tauri::command]
+fn cancel_oauth_callback_listener() {
+    OAUTH_LISTENER_CANCEL.store(true, Ordering::SeqCst);
+}
+
+/// Minimal URL percent-decoding — handles %XX escapes and `+` → space
+/// (the standard form-encoded variant used by OAuth providers).
+/// Sufficient for OAuth query strings; not a general-purpose decoder.
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("00");
+                let v = u8::from_str_radix(hex, 16).unwrap_or(0);
+                out.push(v);
+                i += 3;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Minimal HTML escaping for the OAuth success/error page. We only
+/// inject error_description into HTML; everything else is static.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// Toggle global keyboard listening on/off.
@@ -500,7 +869,9 @@ pub fn run() {
             greet,
             set_global_input_enabled,
             set_close_to_tray,
-            record_tick_heartbeat
+            record_tick_heartbeat,
+            start_oauth_callback_listener,
+            cancel_oauth_callback_listener
         ])
         .setup(|app| {
             // Tray failures shouldn't crash the app — log + continue.
@@ -509,10 +880,11 @@ pub fn run() {
             if let Err(e) = build_tray(app.handle()) {
                 eprintln!("[tray] failed to build: {:?}", e);
             }
-            // Stream server — OBS browser source URL endpoint. Bind
-            // failures are non-fatal (port conflict, sandboxed
+            // Stream server — OBS browser source URL endpoint AND
+            // generic /webhook/event ingress for external bridges.
+            // Bind failures are non-fatal (port conflict, sandboxed
             // environment, etc.); the editor works without it.
-            spawn_stream_server();
+            spawn_stream_server(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

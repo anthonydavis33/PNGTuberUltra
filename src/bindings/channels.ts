@@ -33,6 +33,78 @@ import {
 import { getMidiSource } from "../inputs/MidiSource";
 import { HEART_RATE_CHANNELS } from "../inputs/HeartRateSource";
 import { TWITCH_CHANNELS } from "../inputs/TwitchChatSource";
+import { TWITCH_EVENTSUB_CHANNELS } from "../inputs/TwitchEventSubSource";
+import { YOUTUBE_CHANNELS } from "../inputs/YoutubeChatSource";
+import {
+  WEBHOOK_BASE_CHANNELS,
+  TIKTOK_CHANNELS,
+} from "../inputs/WebhookSource";
+
+void TWITCH_EVENTSUB_CHANNELS;
+void YOUTUBE_CHANNELS;
+void WEBHOOK_BASE_CHANNELS;
+void TIKTOK_CHANNELS;
+
+/** Twitch EventSub event channels — split into the three picker
+ *  buckets the same way other sources do. CheerBits / RaidViewers are
+ *  numeric impulses (linear / Spring); the rest are discrete strings
+ *  for visibility / stateMap bindings; EventSubActive is a boolean. */
+const TWITCH_EVENTSUB_CONTINUOUS = [
+  "TwitchCheerBits",
+  "TwitchRaidViewers",
+] as const;
+const TWITCH_EVENTSUB_DISCRETE = [
+  "TwitchFollow",
+  "TwitchSubEvent",
+  "TwitchSubTier",
+  "TwitchCheer",
+  "TwitchChannelPoint",
+  "TwitchChannelPointUser",
+  "TwitchChannelPointInput",
+  "TwitchRaid",
+] as const;
+const TWITCH_EVENTSUB_BOOLEAN = ["TwitchEventSubActive"] as const;
+
+/** YouTube Live Chat channels. SuperChatAmount and MemberMonths are
+ *  numeric impulses; the rest are strings (chat text, usernames,
+ *  command names, super-chat senders); ChatActive is a boolean. */
+const YOUTUBE_CONTINUOUS = [
+  "YoutubeSuperChatAmount",
+  "YoutubeMemberMonths",
+] as const;
+const YOUTUBE_DISCRETE = [
+  "YoutubeChatMessage",
+  "YoutubeChatUser",
+  "YoutubeChatCommand",
+  "YoutubeSuperChat",
+  "YoutubeMember",
+] as const;
+const YOUTUBE_BOOLEAN = ["YoutubeChatActive"] as const;
+
+/** Webhook + TikTok channels. */
+const WEBHOOK_CONTINUOUS = ["WebhookValue"] as const;
+const WEBHOOK_DISCRETE = [
+  "WebhookEvent",
+  "WebhookSource",
+  "WebhookUser",
+  "WebhookMessage",
+] as const;
+const WEBHOOK_BOOLEAN = ["WebhookActive"] as const;
+const TIKTOK_CONTINUOUS = [
+  "TiktokGiftCount",
+  "TiktokGiftValue",
+  "TiktokLikeCount",
+  "TiktokViewerCount",
+] as const;
+const TIKTOK_DISCRETE = [
+  "TiktokChat",
+  "TiktokUser",
+  "TiktokGift",
+  "TiktokFollow",
+  "TiktokLike",
+  "TiktokShare",
+] as const;
+const TIKTOK_BOOLEAN = ["TiktokActive"] as const;
 
 /** Twitch event channels grouped by binding kind. The numeric ones
  *  (TwitchBits) are continuous; everything else is discrete (string
@@ -195,6 +267,19 @@ export function getKnownChannels(
       // chat is connected".
       ...TWITCH_DISCRETE,
       ...TWITCH_BOOLEAN,
+      // Twitch EventSub events — channel point redemption titles,
+      // follow / sub / raid usernames. "Show on TwitchChannelPoint
+      // equals 'Hydrate'" is the canonical streamer rig.
+      ...TWITCH_EVENTSUB_DISCRETE,
+      ...TWITCH_EVENTSUB_BOOLEAN,
+      // YouTube Live Chat — same shape as Twitch chat.
+      ...YOUTUBE_DISCRETE,
+      ...YOUTUBE_BOOLEAN,
+      // External webhook events (TikTok bridges, Streamer.bot, etc.).
+      ...WEBHOOK_DISCRETE,
+      ...WEBHOOK_BOOLEAN,
+      ...TIKTOK_DISCRETE,
+      ...TIKTOK_BOOLEAN,
     );
   } else if (kind === "pose") {
     // Continuous numeric inputs only — pose progress is value-driven.
@@ -223,6 +308,17 @@ export function getKnownChannels(
       // TwitchBits is a perfect pose driver via Spring modifier —
       // big cheers throw the avatar back, small cheers nudge it.
       ...TWITCH_CONTINUOUS,
+      // Twitch EventSub numeric impulses — same Spring-modifier
+      // territory as TwitchBits.
+      ...TWITCH_EVENTSUB_CONTINUOUS,
+      // YouTube super chat amounts + member months drive scale /
+      // rotation impulses naturally.
+      ...YOUTUBE_CONTINUOUS,
+      // Webhook + TikTok numeric channels (gift counts, like counts,
+      // viewer count). Viewer count is the rare continuous one
+      // — perfect for "head sway intensifies as the room fills" rigs.
+      ...WEBHOOK_CONTINUOUS,
+      ...TIKTOK_CONTINUOUS,
     );
   } else {
     // Continuous numeric channels (suit linear mappings).
@@ -235,6 +331,10 @@ export function getKnownChannels(
       ...midi.continuous,
       ...HEART_RATE_CONTINUOUS,
       ...TWITCH_CONTINUOUS,
+      ...TWITCH_EVENTSUB_CONTINUOUS,
+      ...YOUTUBE_CONTINUOUS,
+      ...WEBHOOK_CONTINUOUS,
+      ...TIKTOK_CONTINUOUS,
     );
     // Discrete channels (suit stateMap mappings — phoneme/viseme/state/
     // region/key → number lookups). Lipsync is the recommended default
@@ -256,6 +356,14 @@ export function getKnownChannels(
       ...HEART_RATE_BOOLEAN,
       ...TWITCH_DISCRETE,
       ...TWITCH_BOOLEAN,
+      ...TWITCH_EVENTSUB_DISCRETE,
+      ...TWITCH_EVENTSUB_BOOLEAN,
+      ...YOUTUBE_DISCRETE,
+      ...YOUTUBE_BOOLEAN,
+      ...WEBHOOK_DISCRETE,
+      ...WEBHOOK_BOOLEAN,
+      ...TIKTOK_DISCRETE,
+      ...TIKTOK_BOOLEAN,
     );
   }
 
@@ -336,6 +444,10 @@ export function getValuesForChannel(
     case "MidiNoteOn":
     case "HeartRateActive":
     case "TwitchChatActive":
+    case "TwitchEventSubActive":
+    case "YoutubeChatActive":
+    case "WebhookActive":
+    case "TiktokActive":
       // Booleans stringify to "true"/"false" through the visibility
       // condition evaluator; expose both so Show On / equals checks work
       // without the user having to remember the casing.

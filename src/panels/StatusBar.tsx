@@ -22,6 +22,8 @@ import {
   MousePointer,
   Settings,
   Tv,
+  Webhook,
+  CirclePlay,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getMicSource } from "../inputs/MicSource";
@@ -45,6 +47,15 @@ import {
   getTwitchChatSource,
   type TwitchConnectionInfo,
 } from "../inputs/TwitchChatSource";
+import {
+  getTwitchEventSubSource,
+  type TwitchEventSubInfo,
+} from "../inputs/TwitchEventSubSource";
+import {
+  getYoutubeChatSource,
+  type YoutubeConnectionInfo,
+} from "../inputs/YoutubeChatSource";
+import { getWebhookSource } from "../inputs/WebhookSource";
 import { useAvatar } from "../store/useAvatar";
 import { useSettings } from "../store/useSettings";
 import { useInputValue } from "../hooks/useInputValue";
@@ -116,6 +127,19 @@ export function StatusBar() {
     // null channels, but no socket is opened until the auto-connect
     // effect (or a manual click) supplies a channel name.
     getTwitchChatSource();
+    // Twitch EventSub: auto-restores from stored OAuth tokens if the
+    // user previously connected. Requires a registered Twitch dev
+    // app's Client ID — see TwitchEventSubSource header.
+    getTwitchEventSubSource();
+    // YouTube Live Chat: auto-restores from stored OAuth tokens.
+    // Requires a Google Cloud OAuth Client ID — see
+    // YoutubeChatSource header.
+    getYoutubeChatSource();
+    // Webhook receiver: subscribes to Tauri `webhook-event` events
+    // emitted by the Rust HTTP server's POST /webhook/event endpoint.
+    // External tools (TikTok bridges, Streamer.bot, custom scripts)
+    // POST to http://localhost:47882/webhook/event to drive bindings.
+    getWebhookSource();
     // Apply current avatar's autoblink config — turns the source on
     // if the loaded avatar has it enabled, off otherwise. Subsequent
     // config changes route through the model-subscription effect
@@ -311,6 +335,60 @@ export function StatusBar() {
   const handleTwitchDisconnect = (): void => {
     getTwitchChatSource().setChannel(null);
   };
+  // Twitch EventSub (OAuth) — separate state from chat. Authorizing
+  // the app unlocks channel point redemptions, follows, raids, subs.
+  const [twitchEventSubInfo, setTwitchEventSubInfo] =
+    useState<TwitchEventSubInfo>({
+      state: "disconnected",
+      login: null,
+      error: null,
+    });
+  useEffect(() => {
+    return getTwitchEventSubSource().subscribeConnection(setTwitchEventSubInfo);
+  }, []);
+  const handleTwitchOAuthClick = (): void => {
+    const src = getTwitchEventSubSource();
+    if (
+      twitchEventSubInfo.state === "connected" ||
+      twitchEventSubInfo.state === "connecting" ||
+      twitchEventSubInfo.state === "authorizing"
+    ) {
+      src.disconnect();
+    } else {
+      void src.connect();
+    }
+  };
+  // YouTube Live Chat (OAuth + polling).
+  const lastYtMessage = useInputValue<string | null>("YoutubeChatMessage");
+  const lastYtUser = useInputValue<string | null>("YoutubeChatUser");
+  const [youtubeInfo, setYoutubeInfo] = useState<YoutubeConnectionInfo>({
+    state: "disconnected",
+    channelTitle: null,
+    error: null,
+  });
+  useEffect(() => {
+    return getYoutubeChatSource().subscribeConnection(setYoutubeInfo);
+  }, []);
+  const handleYoutubeClick = (): void => {
+    const src = getYoutubeChatSource();
+    if (
+      youtubeInfo.state === "polling" ||
+      youtubeInfo.state === "waiting" ||
+      youtubeInfo.state === "authorizing"
+    ) {
+      src.disconnect();
+    } else {
+      void src.connect();
+    }
+  };
+  // Webhook receiver — boolean active state + a generic event pulse
+  // for the StatusBar readout.
+  const lastWebhookEvent = useInputValue<string | null>("WebhookEvent");
+  const lastWebhookSource = useInputValue<string | null>("WebhookSource");
+  const [webhookActive, setWebhookActive] = useState(false);
+  useEffect(() => {
+    return getWebhookSource().subscribeActive(setWebhookActive);
+  }, []);
 
   // Keep mic source config in sync with the avatar.
   useEffect(() => {
@@ -824,13 +902,124 @@ export function StatusBar() {
                   <code>TwitchChatMessage</code>, !commands to{" "}
                   <code>TwitchChatCommand</code>, cheers to{" "}
                   <code>TwitchBits</code>, and subs to{" "}
-                  <code>TwitchSubscriber</code>. Channel point
-                  redemptions and follow events require a separate
-                  OAuth flow (coming later).
+                  <code>TwitchSubscriber</code>.
                 </p>
+              </section>
+              <section
+                className="popover-section"
+                style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}
+              >
+                <label className="popover-label">
+                  Channel-point redemptions, follows, raids
+                </label>
+                <p className="popover-hint" style={{ marginTop: 0 }}>
+                  Requires authorizing PNGTuberUltra with your Twitch
+                  account (one click — opens browser).{" "}
+                  {twitchEventSubInfo.state === "connected" ? (
+                    <>
+                      Connected as <code>{twitchEventSubInfo.login}</code>.
+                    </>
+                  ) : twitchEventSubInfo.state === "error" ? (
+                    <span style={{ color: "var(--danger)" }}>
+                      {twitchEventSubInfo.error}
+                    </span>
+                  ) : (
+                    "Adds TwitchChannelPoint, TwitchFollow, TwitchRaid, and EventSub-only sub events."
+                  )}
+                </p>
+                <div className="popover-button-row">
+                  <button
+                    type="button"
+                    onClick={handleTwitchOAuthClick}
+                    disabled={
+                      twitchEventSubInfo.state === "authorizing" ||
+                      twitchEventSubInfo.state === "connecting"
+                    }
+                  >
+                    {twitchEventSubInfo.state === "connected"
+                      ? "Disconnect OAuth"
+                      : twitchEventSubInfo.state === "authorizing"
+                        ? "Authorizing…"
+                        : twitchEventSubInfo.state === "connecting"
+                          ? "Connecting…"
+                          : "Connect with Twitch"}
+                  </button>
+                </div>
               </section>
             </div>
           )}
+        </section>
+
+        {/* YouTube Live Chat — own section, own popover. Connect
+            triggers Google OAuth → token exchange → polling for the
+            user's active broadcast → chat message polling. */}
+        <section
+          className="status-section status-section-right"
+          title={
+            youtubeInfo.state === "polling"
+              ? `YouTube live chat: ${youtubeInfo.channelTitle ?? "connected"}\nClick the icon to disconnect.`
+              : youtubeInfo.state === "waiting"
+                ? "YouTube authorized — waiting for an active broadcast. Go live and the source will pick up your chat automatically."
+                : youtubeInfo.state === "authorizing"
+                  ? "Authorizing with Google…"
+                  : youtubeInfo.state === "error"
+                    ? `YouTube error: ${youtubeInfo.error ?? "unknown"}\nClick to reconnect.`
+                    : "Click the icon to connect a YouTube account. Live chat, super chats, and new members become Youtube* channels in bindings."
+          }
+        >
+          <button
+            className={`status-gear ${youtubeInfo.state === "polling" ? "live" : ""}`}
+            onClick={handleYoutubeClick}
+            disabled={youtubeInfo.state === "authorizing"}
+            aria-label="YouTube live chat"
+            title="YouTube live chat"
+          >
+            <CirclePlay size={14} />
+          </button>
+          <div className="status-values">
+            <span className="status-value">
+              <span className="status-label">YT</span>
+              <span className="status-num">
+                {youtubeInfo.state === "polling" && lastYtUser
+                  ? `${lastYtUser}: ${(lastYtMessage ?? "").slice(0, 14)}`
+                  : youtubeInfo.state === "polling"
+                    ? "live"
+                    : youtubeInfo.state === "waiting"
+                      ? "off-air"
+                      : "—"}
+              </span>
+            </span>
+          </div>
+        </section>
+
+        {/* Webhook receiver — universal external-event ingress. The
+            Rust server is always listening at /webhook/event, so this
+            section is read-only (no connect button). Shows last
+            received event for sanity-checking external bridges. */}
+        <section
+          className="status-section status-section-right"
+          title={
+            webhookActive
+              ? `Webhook receiver: POST http://localhost:47882/webhook/event\nHeaders: X-Source, X-Event. Body: any JSON.\nLast event: ${lastWebhookEvent ?? "—"}${lastWebhookSource ? ` from ${lastWebhookSource}` : ""}`
+              : "Webhook receiver not active — Rust HTTP server failed to bind. External event bridges (TikTok, Streamer.bot, etc.) won't reach the bus."
+          }
+        >
+          <Webhook
+            size={14}
+            className={`status-icon ${webhookActive && lastWebhookEvent ? "live" : ""}`}
+          />
+          <div className="status-values">
+            <span className="status-value">
+              <span className="status-label">Hook</span>
+              <span className="status-num">
+                {lastWebhookEvent
+                  ? `${lastWebhookSource ?? "?"}/${lastWebhookEvent}`
+                  : webhookActive
+                    ? "ready"
+                    : "off"}
+              </span>
+            </span>
+          </div>
         </section>
 
         {/* Mouse readout pinned to the bottom-right of the webcam row.
