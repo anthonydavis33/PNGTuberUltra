@@ -15,7 +15,7 @@
 
 import { useMemo } from "react";
 import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
-import { NumberField } from "./NumberField";
+import { NumberField, NumberFieldYUp } from "./NumberField";
 import {
   type Animation,
   type AnimationBody,
@@ -394,6 +394,10 @@ export function AnimationRow({
                   }
                 ).targets[key];
                 const enabled = present !== undefined;
+                // Peak Y target uses Y-up display so users type
+                // "+30 = pop up 30px" matching the rest of the UI's
+                // Y-as-pixel-offset convention.
+                const Field = key === "y" ? NumberFieldYUp : NumberField;
                 return (
                   <div
                     key={key}
@@ -413,7 +417,7 @@ export function AnimationRow({
                       }
                       aria-label={`Toggle ${label} tween target`}
                     />
-                    <NumberField
+                    <Field
                       label={label}
                       value={present ?? 0}
                       onChange={(v) => updateTweenTarget(key, v)}

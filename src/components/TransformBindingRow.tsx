@@ -18,7 +18,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { NumberField } from "./NumberField";
+import { NumberField, NumberFieldYUp } from "./NumberField";
 import { useEditor } from "../store/useEditor";
 import {
   type AvatarModel,
@@ -134,19 +134,33 @@ export function TransformBindingRow({
     updateMapping(defaultStateMapMapping(binding.input, model));
   };
 
+  // `yUp` flag flips the display sign — applied at the four binding-
+  // OUTPUT call sites (outMin/outMax for linear, value column for
+  // stateMap entries) when binding.target === "y," so users editing
+  // a Y-driving binding type "+30 = pop up 30px" matching the rest
+  // of the UI's Y-up convention. inMin/inMax stay un-flipped because
+  // they're CHANNEL input values (already in their respective
+  // channel's native convention; no Y semantics).
   const numberInput = (
     value: number,
     onChangeNum: (v: number) => void,
     precision = 2,
-  ): React.ReactElement => (
-    <NumberField
-      label=""
-      value={value}
-      onChange={onChangeNum}
-      step={precision === 0 ? 1 : 0.05}
-      precision={precision}
-    />
-  );
+    yUp = false,
+  ): React.ReactElement => {
+    const Field = yUp ? NumberFieldYUp : NumberField;
+    return (
+      <Field
+        label=""
+        value={value}
+        onChange={onChangeNum}
+        step={precision === 0 ? 1 : 0.05}
+        precision={precision}
+      />
+    );
+  };
+  // Whether outputs of this binding land on the sprite's Y axis —
+  // the only target whose output should display Y-up flipped.
+  const outputIsY = binding.target === "y";
 
   return (
     <li
@@ -241,12 +255,18 @@ export function TransformBindingRow({
               </div>
               <div className="mapping-row">
                 <span className="mapping-label">out</span>
-                {numberInput(binding.mapping.outMin, (v) =>
-                  updateLinear({ outMin: v }),
+                {numberInput(
+                  binding.mapping.outMin,
+                  (v) => updateLinear({ outMin: v }),
+                  2,
+                  outputIsY,
                 )}
                 <span className="mapping-dash">–</span>
-                {numberInput(binding.mapping.outMax, (v) =>
-                  updateLinear({ outMax: v }),
+                {numberInput(
+                  binding.mapping.outMax,
+                  (v) => updateLinear({ outMax: v }),
+                  2,
+                  outputIsY,
                 )}
               </div>
               <label
@@ -268,6 +288,7 @@ export function TransformBindingRow({
               mapping={binding.mapping}
               onChange={updateStateMapEntries}
               numberInput={numberInput}
+              outputIsY={outputIsY}
             />
           )}
         </>
@@ -283,13 +304,20 @@ interface StateMapEditorProps {
     value: number,
     onChangeNum: (v: number) => void,
     precision?: number,
+    yUp?: boolean,
   ) => React.ReactElement;
+  /** True when the parent binding's target is "y" — flips the
+   *  display sign on each entry's value so users edit in Y-up
+   *  convention (matches Transform Y, pose.y, etc.). Storage stays
+   *  Pixi-frame +Y down. */
+  outputIsY: boolean;
 }
 
 function StateMapEditor({
   mapping,
   onChange,
   numberInput,
+  outputIsY,
 }: StateMapEditorProps) {
   const updateEntry = (
     idx: number,
@@ -335,6 +363,7 @@ function StateMapEditor({
                 entry.value,
                 (v) => updateEntry(i, { value: v }),
                 0,
+                outputIsY,
               )}
               <button
                 onClick={() => removeEntry(i)}

@@ -189,6 +189,20 @@ export class ChainSimulator {
     const anchorDY = state.initialized ? anchorWorldY - prevAnchorY : 0;
     state.initialized = true;
 
+    // Same coupling clamp as the chain step — see that comment for
+    // rationale. Cap at 2× segmentLength per frame so fast anchor
+    // motion (especially upward, where gravity can't help dissipate)
+    // doesn't detonate the ribbon.
+    const MAX_COUPLING_DELTA = config.segmentLength * 2;
+    const couplingDX = Math.max(
+      -MAX_COUPLING_DELTA,
+      Math.min(MAX_COUPLING_DELTA, anchorDX),
+    );
+    const couplingDY = Math.max(
+      -MAX_COUPLING_DELTA,
+      Math.min(MAX_COUPLING_DELTA, anchorDY),
+    );
+
     // Verlet integration with gravity + damping + velocity coupling.
     // Same singularity guard as chain step: damping=0 means "no
     // damping" (perpetual swing) rather than "pow(0, dt) = 0
@@ -200,8 +214,8 @@ export class ChainSimulator {
       const p = state.points[i]!;
       const vx = (p.x - p.prevX) * dampingPerStep;
       const vy = (p.y - p.prevY) * dampingPerStep;
-      const couplingX = i === 1 ? anchorDX * config.velocityCoupling : 0;
-      const couplingY = i === 1 ? anchorDY * config.velocityCoupling : 0;
+      const couplingX = i === 1 ? couplingDX * config.velocityCoupling : 0;
+      const couplingY = i === 1 ? couplingDY * config.velocityCoupling : 0;
       p.prevX = p.x;
       p.prevY = p.y;
       p.x += vx + couplingX;
@@ -322,6 +336,32 @@ export class ChainSimulator {
     const anchorDY = state.initialized ? anchorWorldY - prevAnchorY : 0;
     state.initialized = true;
 
+    // Clamp the per-frame anchor delta used for velocity coupling.
+    // When the user yanks the leader sprite (head, body) very fast
+    // — particularly UPWARD, where gravity can't help dissipate the
+    // injected energy — the raw anchorDX/Y values become large
+    // single-frame impulses. Naively multiplying by velocityCoupling
+    // dumps that energy into the first follower, the constraint
+    // solver then redistributes the resulting overstretch through
+    // every segment, and the chain whips violently for several
+    // frames before settling.
+    //
+    // Capping the coupling source at 2× segmentLength means a single
+    // frame can never inject more impulse than ~one-segment of
+    // motion. The follower still tracks reasonably (it'll catch up
+    // over a few frames), and slow-to-moderate motion is unaffected
+    // (the cap rarely fires in normal use). Fast motion lags
+    // slightly instead of detonating the chain.
+    const MAX_COUPLING_DELTA = config.segmentLength * 2;
+    const couplingDX = Math.max(
+      -MAX_COUPLING_DELTA,
+      Math.min(MAX_COUPLING_DELTA, anchorDX),
+    );
+    const couplingDY = Math.max(
+      -MAX_COUPLING_DELTA,
+      Math.min(MAX_COUPLING_DELTA, anchorDY),
+    );
+
     // Verlet integration for followers (points 1..N).
     //
     // Damping is framerate-independent: velocity retained per second
@@ -350,9 +390,11 @@ export class ChainSimulator {
       const vy = (p.y - p.prevY) * dampingPerStep;
       // Velocity-coupling for the first follower only — propagating
       // it down the chain naturally happens via the distance
-      // constraints below. Higher coupling = whippier chain.
-      const couplingX = i === 1 ? anchorDX * config.velocityCoupling : 0;
-      const couplingY = i === 1 ? anchorDY * config.velocityCoupling : 0;
+      // constraints below. Higher coupling = whippier chain. Uses
+      // the CLAMPED delta computed above so a single rapid frame
+      // can't dump catastrophic energy into the chain.
+      const couplingX = i === 1 ? couplingDX * config.velocityCoupling : 0;
+      const couplingY = i === 1 ? couplingDY * config.velocityCoupling : 0;
       p.prevX = p.x;
       p.prevY = p.y;
       p.x += vx + couplingX;

@@ -11,7 +11,11 @@ import {
 import { useAvatar } from "../store/useAvatar";
 import { useEditor } from "../store/useEditor";
 import { PLACEHOLDER_TEX_H, PLACEHOLDER_TEX_W } from "../canvas/pixiApp";
-import { NumberField } from "../components/NumberField";
+import {
+  NumberField,
+  NumberFieldDamping,
+  NumberFieldYUp,
+} from "../components/NumberField";
 import { BindingRow } from "../components/BindingRow";
 import {
   TransformBindingRow,
@@ -117,6 +121,9 @@ export function Properties() {
   const setSpriteClipBy = useAvatar((s) => s.setSpriteClipBy);
   const setSpriteChain = useAvatar((s) => s.setSpriteChain);
   const setSpriteRibbon = useAvatar((s) => s.setSpriteRibbon);
+  const setSpriteRotationLimits = useAvatar(
+    (s) => s.setSpriteRotationLimits,
+  );
   const addBinding = useAvatar((s) => s.addBinding);
   const removeBinding = useAvatar((s) => s.removeBinding);
   const updateBinding = useAvatar((s) => s.updateBinding);
@@ -300,14 +307,16 @@ export function Properties() {
         break;
       case "pendulum":
         // Defaults tuned to "feels alive on a 30°-radius head shake":
-        // rest at 0° (hanging down), moderate gravity, gentle damping,
-        // medium coupling. Users dial in per rig.
+        // rest at 0° (hanging down), moderate gravity, lively
+        // damping, medium coupling. damping=0.15 matches the chain /
+        // ribbon defaults — settles in ~1.5s, displays as ~0.53 on
+        // the cubic-curve slider. Users dial in per rig.
         mod = {
           id,
           type: "pendulum",
           restAngle: 0,
           gravity: 800,
-          damping: 0.85,
+          damping: 0.15,
           coupling: 0.4,
         };
         break;
@@ -343,7 +352,7 @@ export function Properties() {
             step={1}
             precision={0}
           />
-          <NumberField
+          <NumberFieldYUp
             label="Y"
             value={t.y}
             onChange={setTransform("y")}
@@ -371,6 +380,67 @@ export function Properties() {
             step={0.01}
             precision={2}
           />
+
+          {/* Rotation limits — optional clamp on the LOCAL effective
+              rotation (final value after bindings/poses/modifiers
+              compose). Acts as a mechanical end-stop, like a hinge.
+              Toggle row reveals min/max fields when enabled; when
+              off, the rotation is unconstrained.
+              See Sprite.rotationLimits jsdoc for the precise
+              clamping semantic + the v1 limitation around physics
+              modifiers (Pendulum / Spring on rotation): their
+              internal angular state still accumulates past the
+              clamp, only the rendered angle stops. */}
+          <div className="prop-row">
+            <span
+              className="prop-row-label"
+              title="When on, the sprite's rotation is hard-clamped to the [min, max] range below. Useful for hinge-style rigs (eyes, jaw, doll joints, capes) where the sprite shouldn't rotate freely past a mechanical limit. Limits apply to the FINAL local rotation, after bindings + pose + modifiers (Spring/Pendulum) settle."
+            >
+              Rot limits
+            </span>
+            <label className="prop-row-control chain-checkbox">
+              <input
+                type="checkbox"
+                checked={!!sprite.rotationLimits}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    // Enable with sensible default range. The store
+                    // also handles undefined→default, but explicit
+                    // here keeps the patch shape obvious.
+                    setSpriteRotationLimits(sprite.id, {
+                      min: -45,
+                      max: 45,
+                    });
+                  } else {
+                    setSpriteRotationLimits(sprite.id, undefined);
+                  }
+                }}
+              />
+              <span>{sprite.rotationLimits ? "On" : "Off"}</span>
+            </label>
+          </div>
+          {sprite.rotationLimits && (
+            <>
+              <NumberField
+                label="Min°"
+                value={sprite.rotationLimits.min}
+                onChange={(v) =>
+                  setSpriteRotationLimits(sprite.id, { min: v })
+                }
+                step={5}
+                precision={1}
+              />
+              <NumberField
+                label="Max°"
+                value={sprite.rotationLimits.max}
+                onChange={(v) =>
+                  setSpriteRotationLimits(sprite.id, { max: v })
+                }
+                step={5}
+                precision={1}
+              />
+            </>
+          )}
         </div>
       </CollapsibleSection>
 
@@ -534,143 +604,6 @@ export function Properties() {
               Mask sprite no longer exists — clipping is currently a no-op.
             </p>
           )}
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        id="chain"
-        title="Physics chain"
-        actions={
-          sprite.chain ? (
-            <button
-              className="tool-btn"
-              onClick={() => setSpriteChain(sprite.id, undefined)}
-              title="Disable chain physics on this sprite"
-            >
-              Disable
-            </button>
-          ) : (
-            <button
-              className="tool-btn"
-              onClick={() =>
-                setSpriteChain(sprite.id, { ...DEFAULT_CHAIN_CONFIG })
-              }
-              title="Enable chain physics on this sprite. Choose follower sprites to form the chain."
-            >
-              <Plus size={12} />
-              Enable
-            </button>
-          )
-        }
-      >
-        {sprite.chain ? (
-          <ChainConfigEditor
-            chain={sprite.chain}
-            spriteId={sprite.id}
-            allSprites={model.sprites}
-            onChange={(patch) => setSpriteChain(sprite.id, patch)}
-          />
-        ) : (
-          <p className="empty">
-            Off — sprite renders normally. Click <strong>Enable</strong>{" "}
-            to attach a verlet chain (hair, tail, ears, dangling
-            charms). This sprite becomes the anchor; pick follower
-            sprites to form the chain links. Each frame the chain
-            simulates with gravity, damping, and velocity coupling
-            from the anchor's motion.
-          </p>
-        )}
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        id="ribbon"
-        title="Ribbon physics"
-        actions={
-          sprite.ribbon ? (
-            <button
-              className="tool-btn"
-              onClick={() => setSpriteRibbon(sprite.id, undefined)}
-              title="Disable ribbon physics on this sprite"
-            >
-              Disable
-            </button>
-          ) : (
-            <button
-              className="tool-btn"
-              onClick={() => {
-                // Compute an initial ribbon config that visually
-                // matches the sprite's CURRENT rendered shape — total
-                // length and width derived from the sprite's actual
-                // texture (or sheet frame) dimensions, anchorOffset
-                // shifted so the ribbon's TOP lines up with the
-                // texture's top edge instead of the sprite's center.
-                //
-                // Without this, defaults (8 × 25 = 200px length, 100px
-                // fallback width when no asset) would shrink the
-                // sprite to ~100px wide and stretch it ~200px tall,
-                // hanging entirely BELOW the original pivot — a
-                // disorienting "where did my sprite go?" jump on
-                // enable. With this, the ribbon at rest occupies the
-                // same rectangle as the original sprite.
-                const frame = computeFrameSize(sprite, assets);
-                const segments = DEFAULT_RIBBON_CONFIG.segments;
-                setSpriteRibbon(sprite.id, {
-                  ...DEFAULT_RIBBON_CONFIG,
-                  segments,
-                  // segmentLength × segments ≈ texture/frame height,
-                  // so total ribbon length matches what the sprite
-                  // was rendering before.
-                  segmentLength: Math.max(
-                    1,
-                    Math.round(frame.h / segments),
-                  ),
-                  // Width auto-derives at render time when the sprite
-                  // has an asset (so we leave it undefined). For
-                  // placeholder sprites with no asset, the renderer's
-                  // 100px fallback would mismatch the placeholder's
-                  // 120px width — set explicitly so the placeholder
-                  // case looks right too.
-                  width: sprite.asset ? undefined : frame.w,
-                  // Position the ribbon anchor at the texture's TOP
-                  // (not the sprite's pivot). For sprite.anchor.y =
-                  // 0.5 (centered), texture top is at local y =
-                  // -frame.h/2, so anchorOffset.y = -frame.h * 0.5.
-                  // Generalizes to any anchor position.
-                  anchorOffset: {
-                    x: (0.5 - sprite.anchor.x) * frame.w,
-                    y: -sprite.anchor.y * frame.h,
-                  },
-                });
-              }}
-              title={
-                sprite.cornerOffsets
-                  ? "Enable ribbon — will replace the 4-corner mesh on this sprite"
-                  : "Enable ribbon — turns this sprite into a deformable strip with verlet physics"
-              }
-            >
-              <Plus size={12} />
-              Enable
-            </button>
-          )
-        }
-      >
-        {sprite.ribbon ? (
-          <RibbonConfigEditor
-            ribbon={sprite.ribbon}
-            sprite={sprite}
-            assets={assets}
-            onChange={(patch) => setSpriteRibbon(sprite.id, patch)}
-          />
-        ) : (
-          <p className="empty">
-            Off — sprite renders as a regular image. Click{" "}
-            <strong>Enable</strong> to turn it into a flowing ribbon
-            (single texture deformed by verlet physics — hair
-            strands, tails, capes, banners). Draw the texture with
-            the attachment point at the TOP of the image; the
-            bottom physically swings. Mutually exclusive with
-            4-corner mesh deformation.
-          </p>
-        )}
       </CollapsibleSection>
 
       <CollapsibleSection id="bindings" title="Bindings">
@@ -903,6 +836,151 @@ export function Properties() {
           </ul>
         )}
       </CollapsibleSection>
+
+      {/* Physics — verlet-driven chain (multi-sprite) and ribbon
+          (single-sprite mesh). Grouped together because they share
+          mental model + parameters; positioned AFTER Animations so
+          the panel's natural top-down read is "structure → bindings
+          → modifiers → animations → physics," from least- to
+          most-dynamic. */}
+      <CollapsibleSection id="physics" title="Physics">
+        <CollapsibleSection
+          id="chain"
+          title="Chain"
+          actions={
+            sprite.chain ? (
+              <button
+                className="tool-btn"
+                onClick={() => setSpriteChain(sprite.id, undefined)}
+                title="Disable chain physics on this sprite"
+              >
+                Disable
+              </button>
+            ) : (
+              <button
+                className="tool-btn"
+                onClick={() =>
+                  setSpriteChain(sprite.id, { ...DEFAULT_CHAIN_CONFIG })
+                }
+                title="Enable chain physics on this sprite. Choose follower sprites to form the chain."
+              >
+                <Plus size={12} />
+                Enable
+              </button>
+            )
+          }
+        >
+          {sprite.chain ? (
+            <ChainConfigEditor
+              chain={sprite.chain}
+              spriteId={sprite.id}
+              allSprites={model.sprites}
+              onChange={(patch) => setSpriteChain(sprite.id, patch)}
+            />
+          ) : (
+            <p className="empty">
+              Off — sprite renders normally. Click <strong>Enable</strong>{" "}
+              to attach a verlet chain (hair, tail, ears, dangling
+              charms). This sprite becomes the anchor; pick follower
+              sprites to form the chain links. Each frame the chain
+              simulates with gravity, damping, and velocity coupling
+              from the anchor's motion.
+            </p>
+          )}
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="ribbon"
+          title="Ribbon"
+          actions={
+            sprite.ribbon ? (
+              <button
+                className="tool-btn"
+                onClick={() => setSpriteRibbon(sprite.id, undefined)}
+                title="Disable ribbon physics on this sprite"
+              >
+                Disable
+              </button>
+            ) : (
+              <button
+                className="tool-btn"
+                onClick={() => {
+                  // Compute an initial ribbon config that visually
+                  // matches the sprite's CURRENT rendered shape — total
+                  // length and width derived from the sprite's actual
+                  // texture (or sheet frame) dimensions, anchorOffset
+                  // shifted so the ribbon's TOP lines up with the
+                  // texture's top edge instead of the sprite's center.
+                  //
+                  // Without this, defaults (8 × 25 = 200px length, 100px
+                  // fallback width when no asset) would shrink the
+                  // sprite to ~100px wide and stretch it ~200px tall,
+                  // hanging entirely BELOW the original pivot — a
+                  // disorienting "where did my sprite go?" jump on
+                  // enable. With this, the ribbon at rest occupies the
+                  // same rectangle as the original sprite.
+                  const frame = computeFrameSize(sprite, assets);
+                  const segments = DEFAULT_RIBBON_CONFIG.segments;
+                  setSpriteRibbon(sprite.id, {
+                    ...DEFAULT_RIBBON_CONFIG,
+                    segments,
+                    // segmentLength × segments ≈ texture/frame height,
+                    // so total ribbon length matches what the sprite
+                    // was rendering before.
+                    segmentLength: Math.max(
+                      1,
+                      Math.round(frame.h / segments),
+                    ),
+                    // Width auto-derives at render time when the sprite
+                    // has an asset (so we leave it undefined). For
+                    // placeholder sprites with no asset, the renderer's
+                    // 100px fallback would mismatch the placeholder's
+                    // 120px width — set explicitly so the placeholder
+                    // case looks right too.
+                    width: sprite.asset ? undefined : frame.w,
+                    // Position the ribbon anchor at the texture's TOP
+                    // (not the sprite's pivot). For sprite.anchor.y =
+                    // 0.5 (centered), texture top is at local y =
+                    // -frame.h/2, so anchorOffset.y = -frame.h * 0.5.
+                    // Generalizes to any anchor position.
+                    anchorOffset: {
+                      x: (0.5 - sprite.anchor.x) * frame.w,
+                      y: -sprite.anchor.y * frame.h,
+                    },
+                  });
+                }}
+                title={
+                  sprite.cornerOffsets
+                    ? "Enable ribbon — will replace the 4-corner mesh on this sprite"
+                    : "Enable ribbon — turns this sprite into a deformable strip with verlet physics"
+                }
+              >
+                <Plus size={12} />
+                Enable
+              </button>
+            )
+          }
+        >
+          {sprite.ribbon ? (
+            <RibbonConfigEditor
+              ribbon={sprite.ribbon}
+              sprite={sprite}
+              assets={assets}
+              onChange={(patch) => setSpriteRibbon(sprite.id, patch)}
+            />
+          ) : (
+            <p className="empty">
+              Off — sprite renders as a regular image. Click{" "}
+              <strong>Enable</strong> to turn it into a flowing ribbon
+              (single texture deformed by verlet physics — hair
+              strands, tails, capes, banners). Draw the texture with
+              the attachment point at the TOP of the image; the
+              bottom physically swings. Mutually exclusive with
+              4-corner mesh deformation.
+            </p>
+          )}
+        </CollapsibleSection>
+      </CollapsibleSection>
     </aside>
   );
 }
@@ -1110,20 +1188,20 @@ function ChainConfigEditor({
           precision={0}
         />
         {/*
-         * Damping is "fraction of velocity retained per second."
-         * Counter-intuitive but useful range:
-         *   0.00 → no damping (perpetual swing — runtime treats this
-         *          as a special case; otherwise pow(0, dt) would
-         *          freeze the chain instantly)
-         *   0.50 → settles in ~1s
-         *   0.85 → settles in ~5s (default — feels alive)
-         *   0.95 → settles in ~20s (very floaty)
-         *   1.00 → never settles (perpetual)
-         * Step 0.02 (was 0.05) so 0.85 → 0.87 → 0.89 is a
-         * single-tick fine adjustment instead of a 0.05 jump that
-         * skipped the sweet spot.
+         * Damping displayed via a cubic curve — see the
+         * NumberFieldDamping doc for rationale. UI slider 0..1
+         * distributes settle times perceptually:
+         *   0.3 → ~0.6s (heavy)
+         *   0.5 → ~1.5s (lively)
+         *   0.7 → ~3s (moderate)
+         *   0.85 → ~7s (floaty)
+         *   1.0 → perpetual
+         * Storage is the underlying "fraction-retained-per-second"
+         * value (cube of the displayed slider position). The
+         * runtime simulator is unchanged — this is purely a
+         * display curve.
          */}
-        <NumberField
+        <NumberFieldDamping
           label="Damping"
           value={chain.damping}
           onChange={(v) =>
@@ -1148,7 +1226,7 @@ function ChainConfigEditor({
           step={1}
           precision={1}
         />
-        <NumberField
+        <NumberFieldYUp
           label="Anchor Y"
           value={chain.anchorOffset.y}
           onChange={(v) => onChange({ anchorOffset: { x: chain.anchorOffset.x, y: v } })}
@@ -1301,11 +1379,12 @@ function RibbonConfigEditor({
           precision={0}
         />
         {/*
-         * Damping: same special-case as chain — 0 means "no damping"
-         * (perpetual swing) per the runtime guard. Step 0.02 so the
-         * lively-but-not-floaty range (0.7..0.9) is fine-tunable.
+         * Damping: same cubic-curve display as the chain field —
+         * see NumberFieldDamping for the per-step settle-time
+         * mapping. Storage is fraction-retained-per-second; UI
+         * displays its cube root for an evenly-distributed slider.
          */}
-        <NumberField
+        <NumberFieldDamping
           label="Damping"
           value={ribbon.damping}
           onChange={(v) =>
@@ -1332,7 +1411,7 @@ function RibbonConfigEditor({
           step={1}
           precision={1}
         />
-        <NumberField
+        <NumberFieldYUp
           label="Anchor Y"
           value={ribbon.anchorOffset.y}
           onChange={(v) =>

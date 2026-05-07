@@ -3,7 +3,7 @@
 // dropdown (where applicable), and trash button.
 
 import { Trash2 } from "lucide-react";
-import { NumberField } from "./NumberField";
+import { NumberField, NumberFieldDamping } from "./NumberField";
 import {
   type Modifier,
   type ModifierTarget,
@@ -265,11 +265,11 @@ export function ModifierRow({
         />
         <span
           className="modifier-param-label"
-          title="Fraction of angular velocity retained per second. 0 = no damping (perpetual). 0.5 ≈ settles in ~1s. 0.85 ≈ settles in ~5s (default). 0.95 = very floaty. Step 0.02 so the lively-but-not-floaty range (0.7..0.9) is fine-tunable."
+          title="Damping displayed via a cubic curve so the slider 0..1 distributes settle times perceptually. UI 0.3 ≈ heavy (~0.6s settle), 0.5 ≈ lively (~1.5s), 0.7 ≈ moderate (~3s), 0.85 ≈ floaty (~7s), 1.0 = perpetual. Storage is the underlying fraction-retained-per-second; UI displays its cube root."
         >
           damp
         </span>
-        <NumberField
+        <NumberFieldDamping
           label=""
           value={modifier.damping}
           onChange={(v) => onChange({ damping: v })}

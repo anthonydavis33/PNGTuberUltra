@@ -94,6 +94,30 @@ export interface Sprite {
     br: { x: number; y: number };
   };
   /**
+   * Optional rotation clamp on the LOCAL effective rotation —
+   * applied at the END of the modifier-runner pipeline, AFTER
+   * bindings / pose offsets / animation tweens / Spring / Drag /
+   * Sine / Pendulum / etc. all settle. The clamp limits how far
+   * the sprite can rotate in its own local frame (before parent
+   * compose), modeling a hinge with mechanical end-stops:
+   *
+   *   - Doll's elbow that bends ±90°
+   *   - Cape that flops back ±45° but never inverts
+   *   - Eye sprite that tracks gaze but never rolls past ±20°
+   *
+   * Stored as { min, max } in degrees. min must be ≤ max; values
+   * outside the input range get hard-clamped (no easing — a true
+   * mechanical stop). Undefined = no limits.
+   *
+   * Note for physics-driven sprites (Pendulum modifier, Spring on
+   * rotation): the modifier's INTERNAL angular state still
+   * accumulates past the clamp — only the rendered angle stops.
+   * If the user removes the clamp later, the stored angle may
+   * snap. Acceptable v1 limitation; physics-aware clamping (kill
+   * angular velocity on impact) is a possible follow-up.
+   */
+  rotationLimits?: { min: number; max: number };
+  /**
    * Ribbon physics — single-sprite verlet chain that deforms a
    * tall texture along a flowing curve. The TOP of the texture
    * stays anchored to the sprite's world transform (typically
@@ -197,13 +221,20 @@ export interface ChainConfig {
 }
 
 /** Default values for a fresh chain. Applied by the Properties UI
- *  when the user enables the chain on a sprite for the first time. */
+ *  when the user enables the chain on a sprite for the first time.
+ *
+ *  damping default 0.15 (was 0.85): tuned for "lively, settles in
+ *  ~1.5s" — matches the user-tested practical sweet spot. The
+ *  cubic-curve UI (NumberFieldDamping) displays this as ~0.53,
+ *  comfortable mid-slider. Old default 0.85 displayed in the new
+ *  curved UI as ~0.95 (near max), which was clearly past the
+ *  useful range. */
 export const DEFAULT_CHAIN_CONFIG: ChainConfig = {
   links: [],
   segmentLength: 60,
   restAngle: 0,
   gravity: 800,
-  damping: 0.85,
+  damping: 0.15,
   iterations: 4,
   alignRotation: true,
   velocityCoupling: 0.4,
@@ -267,14 +298,15 @@ export interface RibbonConfig {
 
 /** Default ribbon config. Applied when the user enables ribbon on
  *  a sprite for the first time. Defaults tuned for a typical
- *  shoulder-length hair strand attached to a head. */
+ *  shoulder-length hair strand attached to a head. damping 0.15
+ *  matches the chain default — see DEFAULT_CHAIN_CONFIG comment. */
 export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
   segments: 8,
   // width undefined = derive from asset width at render time
   segmentLength: 25,
   restAngle: 0,
   gravity: 800,
-  damping: 0.85,
+  damping: 0.15,
   iterations: 4,
   velocityCoupling: 0.4,
   anchorOffset: { x: 0, y: 0 },

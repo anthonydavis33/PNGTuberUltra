@@ -9,7 +9,12 @@ import { Properties } from "./panels/Properties";
 import { StatusBar } from "./panels/StatusBar";
 import { PixiCanvas } from "./canvas/PixiCanvas";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useAvatar } from "./store/useAvatar";
 import { useSettings } from "./store/useSettings";
+import {
+  promptUnsavedChanges,
+  saveAvatarToCurrentPath,
+} from "./io/fileOps";
 import "./App.css";
 
 export default function App() {
@@ -55,6 +60,56 @@ export default function App() {
       .catch((err) =>
         console.error("[App] setTitle failed:", err),
       );
+  }, []);
+
+  // Save-prompt on window close. Tauri fires CloseRequested in BOTH
+  // the JS `onCloseRequested` listener AND the Rust `on_window_event`
+  // handler. The Rust side hijacks for close-to-tray; we coordinate
+  // by early-returning here when close-to-tray is on (the window
+  // will hide instead of close — no data loss possible — so no
+  // prompt is needed).
+  //
+  // Otherwise: if dirty, preventDefault, prompt the user, and call
+  // window.destroy() if they save or discard. destroy bypasses
+  // CloseRequested entirely so there's no re-prompt loop.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const window = getCurrentWindow();
+    window
+      .onCloseRequested(async (event) => {
+        // Close-to-tray flow: Rust will hide the window. App stays
+        // running, no work lost. Skip the prompt.
+        if (useSettings.getState().closeToTray) return;
+        if (!useAvatar.getState().isDirty) return;
+
+        // Block the default close until we hear back from the user.
+        event.preventDefault();
+
+        const choice = await promptUnsavedChanges("close PNGTuberUltra");
+        if (choice === "cancel") return;
+        if (choice === "save") {
+          try {
+            await saveAvatarToCurrentPath();
+          } catch (err) {
+            // Save failed (or user cancelled the save dialog) — keep
+            // the window open so they don't lose work. They can try
+            // again or close-and-discard explicitly.
+            console.error("[App] save before close failed:", err);
+            return;
+          }
+        }
+        // save succeeded OR user chose discard — proceed with close.
+        // destroy() bypasses CloseRequested entirely so we don't
+        // re-trigger this handler in a loop.
+        await window.destroy();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err) => {
+        console.error("[App] failed to subscribe to close event:", err);
+      });
+    return () => unlisten?.();
   }, []);
 
   // Tray menu's "Toggle pause input" item emits this event from Rust;

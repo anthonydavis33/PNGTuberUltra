@@ -237,6 +237,29 @@ export class ModifierRunner {
       }
     }
 
+    // Rotation clamp — applied AFTER all bindings / pose / tween /
+    // modifier contributions so it acts as a true mechanical end-stop
+    // on the final local rotation. A Pendulum modifier whose internal
+    // angular velocity wants to push past the clamp gets visually
+    // capped here; its state still accumulates (acceptable v1
+    // limitation, see Sprite.rotationLimits jsdoc), but the rendered
+    // angle stops cleanly. Doesn't affect parent compose — parents
+    // continue rotating normally and child orbits with them; only
+    // the child's LOCAL rotation contribution is clamped.
+    if (sprite.rotationLimits) {
+      const { min, max } = sprite.rotationLimits;
+      // Defensive: tolerate min > max from corrupt model data by
+      // treating it as a no-op clamp rather than producing NaN. The
+      // store layer prevents this via swap-on-edit, but loaded
+      // .pnxr files might have inverted ranges from older builds.
+      if (min <= max) {
+        result = {
+          ...result,
+          rotation: Math.max(min, Math.min(max, result.rotation)),
+        };
+      }
+    }
+
     this.visiting.delete(sprite.id);
     this.worldCache.set(sprite.id, result);
     return result;

@@ -106,3 +106,82 @@ export function NumberField({
     </div>
   );
 }
+
+/**
+ * Display-curved variant for damping-style fields where the
+ * underlying physics quantity decays exponentially. The
+ * "fraction of velocity retained per second" used by the chain
+ * simulator + Pendulum modifier maps non-intuitively to a linear
+ * slider — most of the useful range (settle in ~1-3s) lives in
+ * the slider's first 30%, and everything above 0.3 feels like
+ * "still bouncy" because the settle time grows multiplicatively.
+ *
+ * This wrapper applies a cubic curve in the UI:
+ *   stored = displayed^3
+ *   displayed = stored^(1/3)
+ *
+ * Net effect: the slider 0..1 distributes the practical range
+ * roughly evenly:
+ *   slider 0.3 → stored 0.027 → settles ~0.6s (heavy)
+ *   slider 0.5 → stored 0.125 → settles ~1.5s (lively)
+ *   slider 0.7 → stored 0.343 → settles ~3s (moderate)
+ *   slider 0.85 → stored 0.614 → settles ~7s (floaty)
+ *   slider 1.0 → stored 1 → perpetual
+ *
+ * Storage stays in the existing "fraction-retained-per-second"
+ * convention — the runtime simulator is unchanged. Existing
+ * rigs keep their stored damping unchanged; the UI just displays
+ * the cube root of the value, which lands close to where users
+ * dialed it in (their preferred 0.1-0.3 range now displays as
+ * 0.46-0.67, comfortable mid-slider territory).
+ */
+export function NumberFieldDamping(props: NumberFieldProps) {
+  const stored = Math.max(0, Math.min(1, props.value));
+  const displayed = Math.pow(stored, 1 / 3);
+  return (
+    <NumberField
+      {...props}
+      value={displayed}
+      onChange={(v) => {
+        const clamped = Math.max(0, Math.min(1, v));
+        props.onChange(Math.pow(clamped, 3));
+      }}
+    />
+  );
+}
+
+/**
+ * Display-flipped variant for Y-as-pixel-offset fields. Internals use
+ * Pixi's canonical (+Y down) convention for sprite positions, pose
+ * offsets, anchor offsets, corner offsets, and binding outputs that
+ * target Y. The user's intuitive mental model is +Y up. Rather than
+ * flipping storage everywhere (which would require touching every
+ * Pixi-frame math site + migrating saved .pnxr files), we flip ONLY
+ * the UI display:
+ *
+ *   Display value = -storage
+ *   onChange writes -newDisplayValue back to storage
+ *
+ * Net behavior: existing rigs keep their stored values unchanged
+ * (visual output identical), but the Properties panel now reads
+ * "+30 Y" for "30 pixels up" instead of "-30 Y." Users editing
+ * fields type intuitively (positive = up).
+ *
+ * Apply to: transform.y, pose.y, anchorOffset.y, pivot.y, corner
+ * offsets' .y, animation tween peak Y, transform-binding outMin/
+ * outMax when target === "y."
+ *
+ * Do NOT apply to: anchor.y (texture fraction 0..1, not a world
+ * direction), inMin/inMax (input ranges from channels that already
+ * have their own Y-up convention), rotation (positive = CW per
+ * Pixi; not a Y axis).
+ */
+export function NumberFieldYUp(props: NumberFieldProps) {
+  return (
+    <NumberField
+      {...props}
+      value={-props.value}
+      onChange={(v) => props.onChange(-v)}
+    />
+  );
+}

@@ -23,7 +23,7 @@ import {
   EyeOff,
   Trash2,
 } from "lucide-react";
-import { NumberField } from "./NumberField";
+import { NumberField, NumberFieldYUp } from "./NumberField";
 import {
   type AvatarModel,
   type PoseBinding,
@@ -226,6 +226,12 @@ export function PoseBindingRow({
             {POSE_PROPERTIES.map(({ key, label, step, precision }) => {
               const value = binding.pose[key];
               const enabled = value !== undefined;
+              // Pose targets that map to a Y-as-pixel-offset axis use
+              // the Y-up display wrapper so users see "+30 = 30 up" —
+              // matches the Transform Y field convention. Storage
+              // stays Pixi-frame (+Y down). Only key="y" qualifies;
+              // scaleY is a multiplier, rotation isn't a Y axis.
+              const Field = key === "y" ? NumberFieldYUp : NumberField;
               return (
                 <div
                   key={key}
@@ -245,7 +251,7 @@ export function PoseBindingRow({
                     }
                     aria-label={`Toggle ${label} pose target`}
                   />
-                  <NumberField
+                  <Field
                     label={label}
                     value={value ?? 0}
                     onChange={(v) => updatePoseTarget(key, v)}
@@ -413,8 +419,13 @@ function CornerOffsetsPanel({
         {CORNER_AXES.map(({ corner, axis }) => {
           const off = corners?.[corner];
           const value = (off?.[axis] ?? 0) as number;
+          // Corner offset Y axes are Pixi-frame pixel deltas (+down)
+          // internally; flip to +Y up for the UI display so they
+          // match the user's mental model alongside transform.y /
+          // pose.y.
+          const Field = axis === "y" ? NumberFieldYUp : NumberField;
           return (
-            <NumberField
+            <Field
               key={`${corner}-${axis}`}
               label={`${CORNER_LABELS_SHORT[corner]} ${axis.toUpperCase()}`}
               value={value}
@@ -481,7 +492,7 @@ function PivotPanel({
           step={1}
           precision={0}
         />
-        <NumberField
+        <NumberFieldYUp
           label="Pivot Y"
           value={pivot?.y ?? 0}
           onChange={(v) => updatePivot({ y: v })}
@@ -491,7 +502,7 @@ function PivotPanel({
       </div>
       <div className="pose-binding-pivot-hint">
         {hasScaleOrRotation
-          ? "Pixel offset from sprite anchor. Scale + rotation pivot around this point. (X right, Y down.)"
+          ? "Pixel offset from sprite anchor. Scale + rotation pivot around this point. (X right, +Y up.)"
           : "Pivot only affects scale or rotation targets — enable one above to see the effect."}
       </div>
     </div>

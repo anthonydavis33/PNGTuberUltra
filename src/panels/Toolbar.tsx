@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
+  FilePlus,
   FolderOpen,
   Redo2,
   Save,
@@ -8,11 +9,17 @@ import {
   Sparkles,
   Undo2,
 } from "lucide-react";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
 import { useAvatar } from "../store/useAvatar";
-import { packAvatar, unpackAvatar } from "../io/pnxr";
+import { unpackAvatar } from "../io/pnxr";
 import { SAMPLES, type SampleEntry } from "../io/sampleRig";
+import {
+  PNXR_FILTERS,
+  promptUnsavedChanges,
+  saveAvatarAs,
+  saveAvatarToCurrentPath,
+} from "../io/fileOps";
 import { SettingsPopover } from "./SettingsPopover";
 import { fileNameFromPath, shortPath } from "../utils/path";
 
@@ -24,10 +31,6 @@ const APP_VERSION = "v0.9.8";
 /** Detect modifier-key for save/open shortcuts. Cmd on Mac, Ctrl elsewhere. */
 const isModifier = (e: KeyboardEvent): boolean => e.ctrlKey || e.metaKey;
 
-const PNXR_FILTERS = [
-  { name: "PNGTuberUltra Avatar", extensions: ["pnxr"] },
-];
-
 export function Toolbar() {
   const [isFileBusy, setFileBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -38,7 +41,7 @@ export function Toolbar() {
   const isDirty = useAvatar((s) => s.isDirty);
   const currentFilePath = useAvatar((s) => s.currentFilePath);
   const loadAvatar = useAvatar((s) => s.loadAvatar);
-  const markSaved = useAvatar((s) => s.markSaved);
+  const newAvatar = useAvatar((s) => s.newAvatar);
   const undo = useAvatar((s) => s.undo);
   const redo = useAvatar((s) => s.redo);
   // Subscribe to history lengths so the buttons re-render when their
@@ -54,16 +57,52 @@ export function Toolbar() {
     }, 2500);
   };
 
+  /**
+   * Run the unsaved-changes prompt before a destructive operation
+   * (New / Open / Load Sample). Returns false if the user cancelled
+   * (caller aborts), true if they chose to save (already saved
+   * synchronously here) or to discard. Centralizes the dirty check
+   * so all destructive handlers behave identically — same prompt,
+   * same save flow, same error handling.
+   */
+  const confirmDiscardChanges = async (
+    actionLabel: string,
+  ): Promise<boolean> => {
+    if (!isDirty) return true;
+    const choice = await promptUnsavedChanges(actionLabel);
+    if (choice === "cancel") return false;
+    if (choice === "save") {
+      try {
+        const path = await saveAvatarToCurrentPath();
+        flashStatus(`Saved ${shortPath(path)}`);
+      } catch (err) {
+        console.error("Save failed before destructive op:", err);
+        flashStatus(
+          err instanceof Error
+            ? `Save failed: ${err.message}`
+            : "Save failed",
+        );
+        return false; // don't proceed if save failed / cancelled
+      }
+    }
+    return true;
+  };
+
+  const handleNew = async () => {
+    if (isFileBusy) return;
+    if (!(await confirmDiscardChanges("start a new avatar"))) return;
+    setFileBusy(true);
+    try {
+      newAvatar();
+      flashStatus("New avatar");
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
   const handleOpen = async () => {
     if (isFileBusy) return;
-    if (
-      isDirty &&
-      !window.confirm(
-        "You have unsaved changes. Open another avatar anyway?",
-      )
-    ) {
-      return;
-    }
+    if (!(await confirmDiscardChanges("open another avatar"))) return;
     setFileBusy(true);
     try {
       const picked = await openDialog({
@@ -89,40 +128,25 @@ export function Toolbar() {
     }
   };
 
-  const writeToPath = async (path: string) => {
-    const state = useAvatar.getState();
-    const bytes = await packAvatar({
-      model: state.model,
-      assets: state.assets,
-    });
-    // writeFile accepts a Uint8Array.
-    await writeFile(path, bytes);
-    markSaved(path);
-    flashStatus(`Saved ${shortPath(path)}`);
-  };
-
   const handleSave = async () => {
     if (isFileBusy) return;
     setFileBusy(true);
     try {
-      let path = currentFilePath;
-      if (!path) {
-        const picked = await saveDialog({
-          defaultPath: "avatar.pnxr",
-          filters: PNXR_FILTERS,
-        });
-        if (!picked) {
-          setFileBusy(false);
-          return;
-        }
-        path = picked;
-      }
-      await writeToPath(path);
+      const path = await saveAvatarToCurrentPath();
+      flashStatus(`Saved ${shortPath(path)}`);
     } catch (err) {
-      console.error("Save failed:", err);
-      flashStatus(
-        err instanceof Error ? `Save failed: ${err.message}` : "Save failed",
-      );
+      // "Save cancelled by user" is the cancel path from the save
+      // dialog — don't surface that as an error toast since the
+      // user knew what they were doing. Only show the toast for
+      // genuine failures (write errors, packing failures).
+      if (err instanceof Error && err.message === "Save cancelled by user") {
+        // no-op
+      } else {
+        console.error("Save failed:", err);
+        flashStatus(
+          err instanceof Error ? `Save failed: ${err.message}` : "Save failed",
+        );
+      }
     } finally {
       setFileBusy(false);
     }
@@ -131,12 +155,7 @@ export function Toolbar() {
   const handleLoadSample = async (sample: SampleEntry) => {
     if (isFileBusy) return;
     setShowSampleMenu(false);
-    if (
-      isDirty &&
-      !window.confirm(
-        `You have unsaved changes. Load the "${sample.name}" sample anyway?`,
-      )
-    ) {
+    if (!(await confirmDiscardChanges(`load the "${sample.name}" sample`))) {
       return;
     }
     setFileBusy(true);
@@ -190,22 +209,19 @@ export function Toolbar() {
     if (isFileBusy) return;
     setFileBusy(true);
     try {
-      const picked = await saveDialog({
-        defaultPath: currentFilePath ?? "avatar.pnxr",
-        filters: PNXR_FILTERS,
-      });
-      if (!picked) {
-        setFileBusy(false);
-        return;
-      }
-      await writeToPath(picked);
+      const path = await saveAvatarAs();
+      flashStatus(`Saved ${shortPath(path)}`);
     } catch (err) {
-      console.error("Save As failed:", err);
-      flashStatus(
-        err instanceof Error
-          ? `Save As failed: ${err.message}`
-          : "Save As failed",
-      );
+      if (err instanceof Error && err.message === "Save cancelled by user") {
+        // no-op
+      } else {
+        console.error("Save As failed:", err);
+        flashStatus(
+          err instanceof Error
+            ? `Save As failed: ${err.message}`
+            : "Save As failed",
+        );
+      }
     } finally {
       setFileBusy(false);
     }
@@ -221,11 +237,19 @@ export function Toolbar() {
     handleSave,
     handleSaveAs,
     handleOpen,
+    handleNew,
     undo,
     redo,
   });
   useEffect(() => {
-    handlersRef.current = { handleSave, handleSaveAs, handleOpen, undo, redo };
+    handlersRef.current = {
+      handleSave,
+      handleSaveAs,
+      handleOpen,
+      handleNew,
+      undo,
+      redo,
+    };
   });
 
   useEffect(() => {
@@ -247,7 +271,10 @@ export function Toolbar() {
       }
 
       const key = e.key.toLowerCase();
-      if (key === "s") {
+      if (key === "n") {
+        e.preventDefault();
+        void handlersRef.current.handleNew();
+      } else if (key === "s") {
         e.preventDefault();
         if (e.shiftKey) void handlersRef.current.handleSaveAs();
         else void handlersRef.current.handleSave();
@@ -328,6 +355,16 @@ export function Toolbar() {
       </button>
 
       <span className="toolbar-divider" />
+
+      <button
+        className="tool-btn"
+        onClick={handleNew}
+        disabled={isFileBusy}
+        title="Start a new avatar (Ctrl+N) — clears the scene. Prompts to save if there are unsaved changes."
+      >
+        <FilePlus size={14} />
+        New
+      </button>
 
       <button
         className="tool-btn"

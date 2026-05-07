@@ -112,6 +112,16 @@ interface AvatarStore {
    *  regardless of any visibility binding state. UI uses this for
    *  the per-layer eye toggle. */
   setSpriteVisible: (id: SpriteId, visible: boolean) => void;
+  /** Set or clear the sprite's local rotation clamp. Pass undefined
+   *  to remove limits (sprite rotates freely again). Pass a partial
+   *  patch to update min OR max independently — missing field keeps
+   *  current value, or defaults to a sensible initial range when
+   *  enabling for the first time. The store enforces min ≤ max by
+   *  swapping if the patch produces an inverted range. */
+  setSpriteRotationLimits: (
+    id: SpriteId,
+    patch: Partial<{ min: number; max: number }> | undefined,
+  ) => void;
   /** Set or clear per-corner mesh offsets (4-corner deformation). Pass
    *  undefined to disable mesh rendering and fall back to a regular
    *  Sprite. Pass a (possibly partial) corner map to enable / patch
@@ -224,6 +234,13 @@ interface AvatarStore {
     assets: Record<AssetId, AssetEntry>,
     filePath: string | null,
   ) => void;
+  /** Reset to a fresh empty avatar — single placeholder sprite, no
+   *  assets, no file path, clean dirty state, history wiped. Used by
+   *  the Toolbar's "New" button. Equivalent to loadAvatar() with a
+   *  freshly-constructed empty model; named separately so callers
+   *  reading the trace don't have to figure out "loadAvatar with
+   *  null filePath... is that a new doc or an unsaved import?" */
+  newAvatar: () => void;
   /** Mark the model as saved (clears dirty flag, optionally updates path). */
   markSaved: (filePath?: string) => void;
 
@@ -390,6 +407,40 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
         sprites: state.model.sprites.map((s) =>
           s.id === id ? { ...s, visible } : s,
         ),
+      },
+    })),
+
+  setSpriteRotationLimits: (id, patch) =>
+    set((state) => ({
+      model: {
+        ...state.model,
+        sprites: state.model.sprites.map((s) => {
+          if (s.id !== id) return s;
+          if (patch === undefined) {
+            // Drop the field — sprite rotates freely.
+            const next = { ...s };
+            delete next.rotationLimits;
+            return next;
+          }
+          // Default range when enabling for the first time: ±45°.
+          // Tight enough to be useful for most "limited hinge"
+          // setups, loose enough that the user can immediately see
+          // the clamp affecting their rig (and dial in tighter
+          // from there).
+          const cur = s.rotationLimits ?? { min: -45, max: 45 };
+          let merged = {
+            min: patch.min ?? cur.min,
+            max: patch.max ?? cur.max,
+          };
+          // Enforce min ≤ max. If the user types a min larger than
+          // the current max (or vice versa), swap so the limits
+          // stay coherent — better UX than silently rejecting the
+          // edit.
+          if (merged.min > merged.max) {
+            merged = { min: merged.max, max: merged.min };
+          }
+          return { ...s, rotationLimits: merged };
+        }),
       },
     })),
 
@@ -903,6 +954,25 @@ export const useAvatar = create<AvatarStore>((set, get) => ({
     });
     suppressDirty = false;
     suppressHistory = false;
+  },
+
+  newAvatar: () => {
+    // Build a fresh placeholder with a unique id so it doesn't
+    // collide with any sprite id that might still be referenced
+    // somewhere (binding picker dropdowns, save dialogs, etc.).
+    // Then route through loadAvatar so all the side effects
+    // (asset cleanup, history wipe, dirty reset) happen exactly
+    // once, in the same code path the file-open uses.
+    const fresh: Sprite = {
+      id: `sprite-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Placeholder",
+      transform: { ...DEFAULT_TRANSFORM },
+      anchor: { ...DEFAULT_ANCHOR },
+      visible: true,
+      bindings: [],
+      modifiers: [],
+    };
+    get().loadAvatar({ schema: 1, sprites: [fresh] }, {}, null);
   },
 
   markSaved: (filePath) => {
